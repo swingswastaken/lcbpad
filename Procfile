@@ -1,0 +1,1 @@
+worker: coinflips.py
