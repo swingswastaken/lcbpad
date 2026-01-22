@@ -13,8 +13,10 @@ from discord import Interaction
 load_dotenv()
 
 TOKEN = os.getenv("DISCORD_TOKEN")
-MODE = os.getenv("BOT_MODE", "test")  # default to test if not set
-GUILD_ID = int(os.getenv("GUILD_ID"))  # needed only for testing
+# default to test if not set
+MODE = os.getenv("BOT_MODE", "test")  
+# needed only for testing
+GUILD_ID = int(os.getenv("GUILD_ID"))  
 
 intents = discord.Intents.default()
 intents.message_content = True
