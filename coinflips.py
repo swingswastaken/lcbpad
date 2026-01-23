@@ -2,41 +2,31 @@ from dotenv import load_dotenv
 import os
 import random
 
-
 import discord
-import sqlite3
 from discord.ext import commands
 from discord import app_commands
 from discord.ui import View, Button, Modal, TextInput
 from discord import Interaction
 
+from supabase import create_client, Client
+
 load_dotenv()
 
 TOKEN = os.getenv("DISCORD_TOKEN")
-MODE = os.getenv("BOT_MODE", "test")  # default to test if not set
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+MODE = os.getenv("BOT_MODE", "test")  
 GUILD_ID = int(os.getenv("GUILD_ID"))  # needed only for testing
 
 intents = discord.Intents.default()
 intents.message_content = True
 
-# connect/create sqlite3 file
-conn = sqlite3.connect("skills.db")
-c = conn.cursor()
+# --- Initialize Supabase client ---
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-# Create table for saved skills (if it doesn't exist)
-c.execute('''
-CREATE TABLE IF NOT EXISTS skills (
-    user_id TEXT,
-    user_skill_id INTEGER,
-    skill_name TEXT,
-    base_power INTEGER,
-    coin_power INTEGER,
-    coins INTEGER,
-    unbreakable INTEGER,
-    PRIMARY KEY (user_id, user_skill_id)
-)
-''')
-conn.commit()
+# Ensure "skills" table exists with the same schema
+# Supabase/PostgREST assumes the table exists; manually create it once in the dashboard:
+# Columns: user_id (text), user_skill_id (int, primary key), skill_name (text), base_power (int), coin_power (int), coins (int), unbreakable (int)
 
 # Emoji IDs
 HEAD = "<:limbus_heads:1463921098394439774>"
@@ -44,61 +34,54 @@ TAIL = "<:limbus_tails:1463921048704647188>"
 UNBREAKABLE_HEAD = "<:limbus_unbreakable_heads:1463921190228721684>"
 UNBREAKABLE_TAIL = "<:limbus_unbreakable_tails:1463921283946512566>"
 
+# --- Supabase equivalents of DB functions ---
+
 def save_skill(user_id, skill_name, base_power, coin_power, coins, unbreakable):
     # Get current max user_skill_id for this user
-    c.execute('SELECT MAX(user_skill_id) FROM skills WHERE user_id = ?', (user_id,))
-    row = c.fetchone()
-    user_skill_id = (row[0] or 0) + 1  # start at 1 if no skills
+    res = supabase.table("skills").select("user_skill_id").eq("user_id", user_id).order("user_skill_id", desc=True).limit(1).execute()
+    row = res.data[0] if res.data else None
+    user_skill_id = (row["user_skill_id"] if row else 0) + 1
 
-    c.execute('''
-    INSERT OR REPLACE INTO skills (user_id, user_skill_id, skill_name, base_power, coin_power, coins, unbreakable)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
-    ''', (user_id, user_skill_id, skill_name, base_power, coin_power, coins, unbreakable))
-    conn.commit()
+    supabase.table("skills").insert({
+        "user_id": user_id,
+        "user_skill_id": user_skill_id,
+        "skill_name": skill_name,
+        "base_power": base_power,
+        "coin_power": coin_power,
+        "coins": coins,
+        "unbreakable": unbreakable
+    }).execute()
 
     return user_skill_id
 
 def load_skill(user_id, skill_name=None, skill_id=None):
     if skill_id is not None:
-        c.execute('''
-        SELECT skill_name, base_power, coin_power, coins, unbreakable
-        FROM skills
-        WHERE user_id = ? AND user_skill_id = ?
-        ''', (user_id, skill_id))
-        return c.fetchone()  # returns (skill_name, base_power, coin_power, coins, unbreakable) or None
+        res = supabase.table("skills").select("*").eq("user_id", user_id).eq("user_skill_id", skill_id).execute()
+        if res.data:
+            d = res.data[0]
+            return (d["skill_name"], d["base_power"], d["coin_power"], d["coins"], d["unbreakable"])
     elif skill_name is not None:
-        c.execute('''
-        SELECT base_power, coin_power, coins, unbreakable
-        FROM skills
-        WHERE user_id = ? AND skill_name = ?
-        ''', (user_id, skill_name))
-        row = c.fetchone()
-        if row:
-            return (skill_name, *row)  # prepend name for consistency
+        res = supabase.table("skills").select("*").eq("user_id", user_id).eq("skill_name", skill_name).execute()
+        if res.data:
+            d = res.data[0]
+            return (d["skill_name"], d["base_power"], d["coin_power"], d["coins"], d["unbreakable"])
     return None
 
 def delete_skill(user_id, skill_name=None, skill_id=None):
-    # Delete by ID
     if skill_id is not None:
-        # Optional: get name before deleting
-        c.execute('SELECT skill_name FROM skills WHERE user_id = ? AND user_skill_id = ?', (user_id, skill_id))
-        row = c.fetchone()
-        if not row:
-            return None  # skill not found
-        c.execute('DELETE FROM skills WHERE user_id = ? AND user_skill_id = ?', (user_id, skill_id))
-        conn.commit()
-        return row[0]  # return deleted skill name
-
-    # Delete by name
+        res = supabase.table("skills").select("skill_name").eq("user_id", user_id).eq("user_skill_id", skill_id).execute()
+        if not res.data:
+            return None
+        deleted_name = res.data[0]["skill_name"]
+        supabase.table("skills").delete().eq("user_id", user_id).eq("user_skill_id", skill_id).execute()
+        return deleted_name
     elif skill_name is not None:
-        c.execute('SELECT skill_name FROM skills WHERE user_id = ? AND skill_name = ?', (user_id, skill_name))
-        row = c.fetchone()
-        if not row:
-            return None  # skill not found
-        c.execute('DELETE FROM skills WHERE user_id = ? AND skill_name = ?', (user_id, skill_name))
-        conn.commit()
-        return row[0]  # return deleted skill name
-
+        res = supabase.table("skills").select("skill_name").eq("user_id", user_id).eq("skill_name", skill_name).execute()
+        if not res.data:
+            return None
+        deleted_name = res.data[0]["skill_name"]
+        supabase.table("skills").delete().eq("user_id", user_id).eq("skill_name", skill_name).execute()
+        return deleted_name
     return None
 
 # Helper function to flip coins
@@ -207,24 +190,12 @@ async def flip_cmd(interaction: discord.Interaction, sanity: int, skill_name: st
     user_id = str(interaction.user.id)
     sanity = max(-45, min(45, sanity))  # clamp sanity
 
-    # Load skill by ID or by name
+    # Load skill by ID or by name using Supabase-compatible function
     skill = None
     if skill_id is not None:
-        c.execute('''
-        SELECT skill_name, base_power, coin_power, coins, unbreakable
-        FROM skills
-        WHERE user_id = ? AND user_skill_id = ?
-        ''', (user_id, skill_id))
-        skill = c.fetchone()
+        skill = load_skill(user_id, skill_id=skill_id)
     elif skill_name is not None:
-        c.execute('''
-        SELECT base_power, coin_power, coins, unbreakable
-        FROM skills
-        WHERE user_id = ? AND skill_name = ?
-        ''', (user_id, skill_name))
-        skill_data = c.fetchone()
-        if skill_data:
-            skill = (skill_name, *skill_data)  # prepend name for consistency
+        skill = load_skill(user_id, skill_name=skill_name)
 
     if skill is None:
         await interaction.response.send_message(
