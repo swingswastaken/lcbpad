@@ -240,9 +240,9 @@ async def flip_cmd(interaction: discord.Interaction, sanity: int, skill_name: st
         roll = random.randint(1, 100)
         if roll <= head_chance:
             total_power += coin_power
-            trail += f"{HEAD} "
-        else:
             trail += f"{TAIL} "
+        else:
+            trail += f"{HEAD} "
 
     # Unbreakable coins
     for _ in range(unbreakable):
