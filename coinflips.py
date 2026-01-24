@@ -330,7 +330,7 @@ async def delete_skill_cmd(interaction: discord.Interaction, skill_name: str = N
         )
 
 # Flip Saved Skill /Command
-@bot.tree.command(name="flip", description="Flip a saved skill")
+@bot.tree.command(name="flip_skill", description="Flip a saved skill")
 @app_commands.describe(
     skill_name="Name of the saved skill (optional if using ID)",
     skill_id="ID of the saved skill (optional if using name)",
