@@ -16,7 +16,8 @@ TOKEN = os.getenv("DISCORD_TOKEN")
 # default to test if not set
 MODE = os.getenv("BOT_MODE", "test")  
 # needed only for testing
-GUILD_ID = int(os.getenv("GUILD_ID"))  
+GUILD_ID_ENV = os.getenv("GUILD_ID")
+GUILD_ID = int(GUILD_ID_ENV) if GUILD_ID_ENV else None 
 
 
 intents = discord.Intents.default()
@@ -267,6 +268,9 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 @bot.event
 async def on_ready():
     if MODE == "test":
+        if GUILD_ID is None:
+            raise RuntimeError("GUILD_ID is required in test mode but was not set")
+
         guild = discord.Object(id=GUILD_ID)
         bot.tree.copy_global_to(guild=guild)
         await bot.tree.sync(guild=guild)
@@ -274,8 +278,6 @@ async def on_ready():
     else:
         await bot.tree.sync()
         print(f"Logged in as {bot.user} (GLOBAL)")
-
-print(f"Logged in as {bot.user}")
 
 # ----------------------
 # Limbus Slash Commands
