@@ -659,7 +659,8 @@ async def roll_ttrpg_cmd(
 
     _, skill_name, base_power, dice_power = skill
 
-    total, roll = await roll_skill_ttrpg(skill, sanity)
+    result = await roll_skill_ttrpg(skill, sanity)
+    total, roll = result[0], result[1]
 
     await interaction.response.send_message(
         f"**{skill_name}**\n"
