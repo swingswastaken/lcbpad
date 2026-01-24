@@ -28,12 +28,19 @@ SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-# Emoji IDs
+
 HEAD = "<:limbus_heads:1463921098394439774>"
 TAIL = "<:limbus_tails:1463921048704647188>"
 UNBREAKABLE_HEAD = "<:limbus_unbreakable_heads:1463921190228721684>"
 UNBREAKABLE_TAIL = "<:limbus_unbreakable_tails:1463921283946512566>"
+MAX_SANITY = 45
+MIN_SANITY = -45
 
+# ----------------------
+# Limbus Skill Functions
+# ----------------------
+
+# Save Skill Function
 def save_skill(user_id, skill_name, base_power, coin_power, coins, unbreakable):
     # Get max skill id for user
     res = (
@@ -60,7 +67,7 @@ def save_skill(user_id, skill_name, base_power, coin_power, coins, unbreakable):
 
     return user_skill_id
 
-
+# Load skill function (for /flip)
 def load_skill(user_id, skill_name=None, skill_id=None):
     query = supabase.table("skills").select(
         "skill_name, base_power, coin_power, coins, unbreakable"
@@ -87,6 +94,7 @@ def load_skill(user_id, skill_name=None, skill_id=None):
         row["unbreakable"]
     )
 
+# Delete skill function
 def delete_skill(user_id, skill_name=None, skill_id=None):
     query = supabase.table("skills").select("skill_name").eq("user_id", user_id)
 
@@ -112,7 +120,7 @@ def delete_skill(user_id, skill_name=None, skill_id=None):
     delete_query.execute()
     return skill_name
 
-# Helper function to flip coins
+# Helper function to flip coins (for /clash)
 def flip_skill(user_id, skill_name,  skill_id, sanity, skill_data):
     base_power, coin_power, coins, unbreakable = skill_data
     total_power = base_power
@@ -140,6 +148,117 @@ def flip_skill(user_id, skill_name,  skill_id, sanity, skill_data):
 
     return total_power, normal_coins, unbreakable, trail
 
+# ----------------------
+# TTRPG Skill Functions
+# ----------------------
+
+# Save Skill TTRPG Function
+async def save_skill_ttrpg(user_id: str, skill_slot: int, skill_name: str, base_power: int, dice_power: int):
+    result = supabase.table("ttrpg_skills").select("user_skill_id").eq("user_id", user_id).order("user_skill_id", desc=True).limit(1).execute()
+    row = result.data[0] if result.data else None
+    user_skill_id = (row["user_skill_id"] if row else 0) + 1
+
+    # Insert the skill
+    supabase.table("ttrpg_skills").insert({
+        "user_id": user_id,
+        "user_skill_id": user_skill_id,
+        "skill_slot": skill_slot,
+        "skill_name": skill_name,
+        "base_power": base_power,
+        "dice_power": dice_power
+    }).execute()
+
+    return user_skill_id
+
+# Load Skill TTRPG Function (for /flip_ttrpg)
+async def load_skill_ttrpg(user_id: str, skill_name: str = None, skill_id: int = None):
+    query = supabase.table("ttrpg_skills").select("*").eq("user_id", user_id)
+
+    if skill_id is not None:
+        query = query.eq("user_skill_id", skill_id)
+    elif skill_name is not None:
+        query = query.eq("skill_name", skill_name)
+    else:
+        return None
+
+    result = query.execute()
+    if result.data:
+        row = result.data[0]
+        return row["skill_slot"], row["skill_name"], row["base_power"], row["dice_power"]
+    return None
+
+# Delete Skill TTRPG Function
+async def delete_skill_ttrpg(user_id: str, skill_name: str = None, skill_id: int = None):
+    skill = await load_skill_ttrpg(user_id, skill_name, skill_id)
+    if not skill:
+        return None
+
+    skill_slot, skill_name, _, _ = skill
+
+    if skill_id is not None:
+        supabase.table("ttrpg_skills").delete().eq("user_id", user_id).eq("user_skill_id", skill_id).execute()
+    else:
+        supabase.table("ttrpg_skills").delete().eq("user_id", user_id).eq("skill_name", skill_name).execute()
+
+    return skill_name
+
+# Helper function to apply sanity effects
+def apply_sanity_mod(sanity: int, base_power: int, dice_power: int) -> tuple[int, int]:
+    positive_coin = dice_power >= 0
+    mod_base = base_power
+    mod_dice = abs(dice_power)
+    
+    if positive_coin:
+        if -45 <= sanity <= -41:
+            mod_base -= 3
+            mod_dice += 2
+        elif -40 <= sanity <= -21:
+            mod_base -= 2
+            mod_dice += 2
+        elif -20 <= sanity <= -1:
+            mod_base -= 1
+            mod_dice += 1
+        elif 1 <= sanity <= 20:
+            mod_base += 1
+            mod_dice -= 1
+        elif 21 <= sanity <= 40:
+            mod_base += 2
+            mod_dice -= 2
+        elif 41 <= sanity <= 45:
+            mod_base += 3
+            mod_dice -= 2
+    else:  # negative coins, reverse effects
+        if -45 <= sanity <= -41:
+            mod_base += 3
+            mod_dice -= 2
+        elif -40 <= sanity <= -21:
+            mod_base += 2
+            mod_dice -= 2
+        elif -20 <= sanity <= -1:
+            mod_base += 1
+            mod_dice -= 1
+        elif 1 <= sanity <= 20:
+            mod_base -= 1
+            mod_dice += 1
+        elif 21 <= sanity <= 40:
+            mod_base -= 2
+            mod_dice += 2
+        elif 41 <= sanity <= 45:
+            mod_base -= 3
+            mod_dice += 2
+
+    # Prevent dice from going below 1
+    mod_dice = max(1, mod_dice)
+    return mod_base, mod_dice
+
+# Helper function to roll ttrpg skills
+async def roll_skill_ttrpg(skill_data, sanity: int):
+    _, skill_name, base_power, dice_power = skill_data
+    mod_base, mod_dice = apply_sanity_mod(sanity, base_power, dice_power)
+    roll = random.randint(1, mod_dice)
+    total = mod_base + roll
+    return total, roll
+
 # Sync tree once the bot is ready
 bot = commands.Bot(command_prefix="!", intents=intents)
 
@@ -156,9 +275,12 @@ async def on_ready():
 
 print(f"Logged in as {bot.user}")
 
+# ----------------------
+# Limbus Slash Commands
+# ----------------------
 
 # Save Skill /Command
-@bot.tree.command(name="save_skill", description="Save a skill setup for faster flipping")
+@bot.tree.command(name="save_skill", description="Save a skill for faster coin flipping")
 @app_commands.describe(
     skill_name="Name of the skill",
     base_power="Base power of the skill",
@@ -208,7 +330,7 @@ async def delete_skill_cmd(interaction: discord.Interaction, skill_name: str = N
         )
 
 # Flip Saved Skill /Command
-@bot.tree.command(name="flip", description="Flip coins for a saved skill")
+@bot.tree.command(name="flip", description="Flip a saved skill")
 @app_commands.describe(
     skill_name="Name of the saved skill (optional if using ID)",
     skill_id="ID of the saved skill (optional if using name)",
@@ -461,6 +583,187 @@ async def clash_cmd(interaction: discord.Interaction, sanity: int, skill_name: s
         await interaction.followup.send(
             f"💀 **{loser.display_name}** flips their unbreakable coins:\n{trail_loser}\nTotal Power: {total_loser}"
         )
+
+# ----------------------
+# TTRPG Slash Commands
+# ----------------------
+
+# Save TTRPG skill
+@bot.tree.command(name="save_skill_ttrpg", description="Save a TTRPG skill for faster rolling")
+@app_commands.describe(
+    skill_slot="Skill slot (1, 2, 3)",
+    skill_name="Name of the skill",
+    base_power="Base power of the skill",
+    dice_power="Maximum dice roll (e.g. 1d8 --> 8)"
+)
+async def save_skill_ttrpg_cmd(
+    interaction: discord.Interaction,
+    skill_slot: int,
+    skill_name: str,
+    base_power: int,
+    dice_power: int
+):
+    user_id = str(interaction.user.id)
+    skill_id = await save_skill_ttrpg(user_id, skill_slot, skill_name, base_power, dice_power)
+    await interaction.response.send_message(
+        f"TTRPG Skill **{skill_name}** saved in slot {skill_slot}! (ID: {skill_id})",
+        ephemeral=True
+    )
+
+# Delete TTRPG skill
+@bot.tree.command(name="delete_skill_ttrpg", description="Delete a saved TTRPG skill by name or ID")
+@app_commands.describe(
+    skill_name="Skill name (optional if using ID)",
+    skill_id="Skill ID (optional if using name)"
+)
+async def delete_ttrpg_cmd(
+    interaction: discord.Interaction,
+    skill_name: str = None,
+    skill_id: int = None
+):
+    user_id = str(interaction.user.id)
+    if not skill_name and not skill_id:
+        await interaction.response.send_message("Provide either skill name or ID!", ephemeral=True)
+        return
+
+    deleted = await delete_skill_ttrpg(user_id, skill_name, skill_id)
+    if deleted:
+        await interaction.response.send_message(f"TTRPG Skill **{deleted}** deleted.", ephemeral=True)
+    else:
+        await interaction.response.send_message("Skill not found!", ephemeral=True)
+
+
+
+# Roll TTRPG skill
+@bot.tree.command(name="roll_skill_ttrpg", description="Roll a saved TTRPG skill")
+@app_commands.describe(
+    skill_name="Skill name (optional if using ID)",
+    skill_id="Skill ID (optional if using name)",
+    sanity="Sanity (-45 to 45)"
+)
+async def roll_ttrpg_cmd(
+    interaction: discord.Interaction,
+    sanity: int,
+    skill_name: str = None,
+    skill_id: int = None,
+):
+    sanity = max(MIN_SANITY, min(MAX_SANITY, sanity))
+    user_id = str(interaction.user.id)
+    skill = await load_skill_ttrpg(user_id, skill_name, skill_id)
+    if not skill:
+        await interaction.response.send_message("Skill not found!", ephemeral=True)
+        return
+
+    _, skill_name, base_power, dice_power = skill
+    total, roll = await roll_skill_ttrpg(skill, sanity)
+    await interaction.response.send_message(
+        f"**{skill_name}**\n{base_power} + 1d{dice_power} ({roll}) → **Total: {total}**"
+    )
+
+# Clash TTRPG Skill
+@bot.tree.command(name="clash_ttrpg", description="Clash your TTRPG skill against another player's TTRPG skill")
+@app_commands.describe(
+    skill_name="Your skill name (optional if using ID)",
+    skill_id="Your skill ID (optional if using name)",
+    sanity="Your sanity (-45 to 45)"
+)
+async def clash_ttrpg_cmd(interaction: discord.Interaction, sanity: int, skill_name: str = None, skill_id: int = None):
+    original_user = interaction.user
+    user1_id = str(original_user.id)
+    sanity = max(MIN_SANITY, min(MAX_SANITY, sanity))
+
+    # Load original user's skill
+    skill1 = await load_skill_ttrpg(user1_id, skill_name, skill_id)
+    if not skill1:
+        await interaction.response.send_message(
+            "Your TTRPG skill was not found. Save it first with /save_skill_ttrpg or check your input.",
+            ephemeral=True
+        )
+        return
+
+    _, skill1_name, base1, dice_power1 = skill1
+
+    # --- Challenge Button + Modal ---
+    class ChallengeView(View):
+        def __init__(self, original_user: discord.User):
+            super().__init__(timeout=30)
+            self.original_user = original_user
+            self.challenger_data = None
+
+        @discord.ui.button(label="Join Clash", style=discord.ButtonStyle.primary)
+        async def join(self, interaction: discord.Interaction, button: discord.ui.Button):
+            if interaction.user.id == self.original_user.id:
+                await interaction.response.send_message("You can't challenge yourself!", ephemeral=True)
+                return
+
+            parent_view = self
+
+            class ChallengeModal(Modal, title="Join TTRPG Clash"):
+                sanity_input = TextInput(label="Sanity (-45 to 45)", placeholder="Enter your sanity first", required=True, max_length=5)
+                skill_input = TextInput(label="Skill name or ID", placeholder="Enter your skill name or ID", required=True, max_length=50)
+
+                async def on_submit(self_modal, modal_interaction: Interaction):
+                    try:
+                        sanity_val = max(MIN_SANITY, min(MAX_SANITY, int(self_modal.sanity_input.value)))
+                        skill_val = self_modal.skill_input.value.strip()
+                        challenger_id = str(modal_interaction.user.id)
+
+                        if skill_val.isdigit():
+                            skill2 = await load_skill_ttrpg(challenger_id, skill_id=int(skill_val))
+                        else:
+                            skill2 = await load_skill_ttrpg(challenger_id, skill_name=skill_val)
+
+                        if not skill2:
+                            await modal_interaction.response.send_message("Skill not found! Challenge cancelled.", ephemeral=True)
+                            parent_view.stop()
+                            return
+
+                        _, skill2_name, base2, dice2 = skill2
+                        parent_view.challenger_data = (modal_interaction.user, skill2_name, sanity_val, base2, dice2)
+                        await modal_interaction.response.send_message(f"You joined the clash with **{skill2_name}**!", ephemeral=True)
+                        parent_view.stop()
+
+                    except Exception:
+                        await modal_interaction.response.send_message("Invalid input! Challenge cancelled.", ephemeral=True)
+                        parent_view.stop()
+
+            await interaction.response.send_modal(ChallengeModal())
+
+    view = ChallengeView(original_user)
+    await interaction.response.send_message(
+        f"⚔️ CLASH START - {original_user.mention} uses **{skill1_name}**!\nWaiting for a challenger...",
+        view=view
+    )
+
+    await view.wait()
+    if not view.challenger_data:
+        await interaction.edit_original_response(content="No one challenged in time. Clash cancelled.", view=None)
+        return
+
+    # --- Both players ready ---
+    user2, skill2_name, sanity2, base2, dice_power2 = view.challenger_data
+
+    total1, _ = await roll_skill_ttrpg(skill1, sanity)
+    total2, _ = await roll_skill_ttrpg((None, skill2_name, base2, dice_power2), sanity2)
+
+    while total1 == total2:
+        total1, _ = await roll_skill_ttrpg(skill1, sanity)
+        total2, _ = await roll_skill_ttrpg((None, skill2_name, base2, dice_power2), sanity2)
+    else: winner = original_user if total1 > total2 else user2
+
+    await interaction.followup.send(
+        f"**Clash Results:**\n"
+        f"{original_user.display_name}\n{base1} + 1d{dice_power1} ({dice_power1}) → **Total: {total1}**\n"
+        f"{user2.display_name}\n{base2} + 1d{dice_power2} ({dice_power2}) → **Total: {total2}**\n"
+        f"🏆 **Winner:** {winner.display_name}!"
+    )
+
+    # Winner power dice
+    total_winner = total1 if total1 > total2 else total2
+
+    await interaction.followup.send(
+        f"**{winner.display_name}**'s Damage Dealt: {total_winner}"
+    )
 
 
 # Run the bot
