@@ -258,7 +258,7 @@ async def roll_skill_ttrpg(skill_data, sanity: int):
     mod_base, mod_dice = apply_sanity_mod(sanity, base_power, dice_power)
     roll = random.randint(1, mod_dice)
     total = mod_base + roll
-    return total, roll
+    return total, roll, mod_base, mod_dice
 
 # Sync tree once the bot is ready
 bot = commands.Bot(command_prefix="!", intents=intents)
@@ -650,6 +650,7 @@ async def roll_ttrpg_cmd(
     skill_id: int = None,
 ):
     sanity = max(MIN_SANITY, min(MAX_SANITY, sanity))
+
     user_id = str(interaction.user.id)
     skill = await load_skill_ttrpg(user_id, skill_name, skill_id)
     if not skill:
@@ -657,9 +658,12 @@ async def roll_ttrpg_cmd(
         return
 
     _, skill_name, base_power, dice_power = skill
+
     total, roll = await roll_skill_ttrpg(skill, sanity)
+
     await interaction.response.send_message(
-        f"**{skill_name}**\n{base_power} + 1d{dice_power} ({roll}) → **Total: {total}**"
+        f"**{skill_name}**\n"
+        f"{base_power} + 1d{dice_power} ({roll}) → **Total: {total}**"
     )
 
 # Clash TTRPG Skill
