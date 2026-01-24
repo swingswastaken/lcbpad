@@ -255,9 +255,12 @@ def apply_sanity_mod(sanity: int, base_power: int, dice_power: int) -> tuple[int
 # Helper function to roll ttrpg skills
 async def roll_skill_ttrpg(skill_data, sanity: int):
     _, skill_name, base_power, dice_power = skill_data
+
     mod_base, mod_dice = apply_sanity_mod(sanity, base_power, dice_power)
+
     roll = random.randint(1, mod_dice)
     total = mod_base + roll
+
     return total, roll, mod_base, mod_dice
 
 # Sync tree once the bot is ready
@@ -659,12 +662,11 @@ async def roll_ttrpg_cmd(
 
     _, skill_name, base_power, dice_power = skill
 
-    result = await roll_skill_ttrpg(skill, sanity)
-    total, roll = result[0], result[1]
+    total, roll, mod_base, mod_dice = await roll_skill_ttrpg(skill, sanity)
 
     await interaction.response.send_message(
         f"**{skill_name}**\n"
-        f"{base_power} + 1d{dice_power} ({roll}) → **Total: {total}**"
+        f"{mod_base} + 1d{mod_dice} ({roll}) → **Total: {total}**"
     )
 
 # Clash TTRPG Skill
