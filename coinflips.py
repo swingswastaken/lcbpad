@@ -8,6 +8,8 @@ from discord import app_commands
 from discord.ui import View, Button, Modal, TextInput
 from discord import Interaction
 
+BOT_MODE=global
+
 load_dotenv()
 
 TOKEN = os.getenv("DISCORD_TOKEN")
