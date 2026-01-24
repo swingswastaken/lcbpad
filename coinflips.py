@@ -14,7 +14,7 @@ TOKEN = os.getenv("DISCORD_TOKEN")
 # default to test if not set
 MODE = os.getenv("BOT_MODE", "test")  
 # needed only for testing
-GUILD_ID = int(os.getenv("GUILD_ID"))  
+GUILD_ID = str(os.getenv("GUILD_ID"))  
 
 
 intents = discord.Intents.default()
