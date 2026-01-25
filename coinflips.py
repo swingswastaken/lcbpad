@@ -258,8 +258,9 @@ async def roll_skill_ttrpg(skill_data, sanity: int):
 
     mod_base, mod_dice = apply_sanity_mod(sanity, base_power, dice_power)
 
-    roll = random.randint(1, mod_dice)
-    total = mod_base + roll
+    dice_sign = 1 if dice_power >= 0 else -1
+    roll = random.randint(1, abs(mod_dice))
+    total = mod_base + (dice_sign * roll)
 
     return total, roll, mod_base, mod_dice
 
@@ -664,9 +665,11 @@ async def roll_ttrpg_cmd(
 
     total, roll, mod_base, mod_dice = await roll_skill_ttrpg(skill, sanity)
 
+    dice_text = f"- 1d{mod_dice}" if dice_power < 0 else f"+ 1d{mod_dice}"
+
     await interaction.response.send_message(
         f"**{skill_name}**\n"
-        f"{mod_base} + 1d{mod_dice} ({roll}) → **Total: {total}**"
+        f"{mod_base} {dice_text} ({roll}) → **Total: {total}**"
     )
 
 # Clash TTRPG Skill
