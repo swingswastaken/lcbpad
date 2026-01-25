@@ -752,19 +752,23 @@ async def clash_ttrpg_cmd(interaction: discord.Interaction, sanity: int, skill_n
     # --- Both players ready ---
     user2, skill2_name, sanity2, base2, dice_power2 = view.challenger_data
 
-    total1, _ = await roll_skill_ttrpg(skill1, sanity)
-    total2, _ = await roll_skill_ttrpg((None, skill2_name, base2, dice_power2), sanity2)
+    total1, roll1, mod_base1, mod_dice1 = await roll_skill_ttrpg(skill1, sanity)
+    total2, roll2, mod_base2, mod_dice2 = await roll_skill_ttrpg(
+        (None, skill2_name, base2, dice_power2), sanity2
+    )
 
     while total1 == total2:
-        total1, _ = await roll_skill_ttrpg(skill1, sanity)
-        total2, _ = await roll_skill_ttrpg((None, skill2_name, base2, dice_power2), sanity2)
+        total1, roll1, mod_base1, mod_dice1 = await roll_skill_ttrpg(skill1, sanity)
+        total2, roll2, mod_base2, mod_dice2 = await roll_skill_ttrpg(
+            (None, skill2_name, base2, dice_power2), sanity2
+    )
     else: winner = original_user if total1 > total2 else user2
 
     await interaction.followup.send(
-        f"**Clash Results:**\n"
-        f"{original_user.display_name}\n{base1} + 1d{dice_power1} ({dice_power1}) → **Total: {total1}**\n"
-        f"{user2.display_name}\n{base2} + 1d{dice_power2} ({dice_power2}) → **Total: {total2}**\n"
-        f"🏆 **Winner:** {winner.display_name}!"
+        f"{original_user.display_name}\n"
+        f"{mod_base1} + 1d{mod_dice1} ({roll1}) → **Total: {total1}**\n"
+        f"{user2.display_name}\n"
+        f"{mod_base2} + 1d{mod_dice2} ({roll2}) → **Total: {total2}**\n"
     )
 
     # Winner power dice
