@@ -639,6 +639,69 @@ async def delete_ttrpg_cmd(
         await interaction.response.send_message("Skill not found!", ephemeral=True)
 
 
+# List TTRPG Skills
+
+@bot.tree.command(name="skill_list_ttrpg", description="View your list of TTRPG skills")
+async def skill_list_ttrpg_cmd(interaction: discord.Interaction):
+    user_id = str(interaction.user.id)
+
+    result = (
+        supabase.table("ttrpg_skills")
+        .select("user_skill_id, skill_slot, skill_name, base_power, dice_power")
+        .eq("user_id", user_id)
+        .order("skill_slot")
+        .execute()
+    )
+
+    if not result.data:
+        await interaction.response.send_message(
+            "You have no saved TTRPG skills.",
+            ephemeral=True
+        )
+        return
+
+    lines = []
+    for s in result.data:
+        dice = f"+ 1d{s['dice_power']}" if s["dice_power"] >= 0 else f"- 1d{abs(s['dice_power'])}"
+        lines.append(
+            f"**Slot {s['skill_slot']}** | ID `{s['user_skill_id']}`\n"
+            f"{s['skill_name']} → {s['base_power']} {dice}"
+        )
+
+    await interaction.response.send_message(
+        "**__TTRPG Skill List__**\n\n" + "\n\n".join(lines),
+        ephemeral=True
+    )
+
+# TTRPG Skill Info
+
+@bot.tree.command(name="skill_info_ttrpg", description="View the details of a TTRPG skill")
+@app_commands.describe(
+    skill_name="Skill name (optional if using ID)",
+    skill_id="Skill ID (optional if using name)"
+)
+async def skill_info_ttrpg_cmd(
+    interaction: discord.Interaction,
+    skill_name: str = None,
+    skill_id: int = None
+):
+    user_id = str(interaction.user.id)
+    skill = await load_skill_ttrpg(user_id, skill_name, skill_id)
+
+    if not skill:
+        await interaction.response.send_message("Skill not found.", ephemeral=True)
+        return
+
+    _, name, base, dice = skill
+    dice_txt = f"1d{dice}" if dice >= 0 else f"-1d{abs(dice)}"
+
+    await interaction.response.send_message(
+        f"**__Skill Info__**\n\n"
+        f"**{name}**\n"
+        f"Base Power: `{base}`\n"
+        f"Dice: `{dice_txt}`",
+        ephemeral=True
+    )
 
 # Roll TTRPG skill
 @bot.tree.command(name="roll_skill_ttrpg", description="Roll a saved TTRPG skill")
