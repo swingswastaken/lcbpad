@@ -36,6 +36,27 @@ UNBREAKABLE_HEAD = "<:limbus_unbreakable_heads:1463921190228721684>"
 UNBREAKABLE_TAIL = "<:limbus_unbreakable_tails:1463921283946512566>"
 MAX_SANITY = 45
 MIN_SANITY = -45
+ATTACK_TYPES = ["slash", "pierce", "blunt"]
+SIN_AFFINITIES = ["wrath", "lust", "sloth", "gluttony", "gloom", "pride", "envy"]
+SLOTS = ["1", "2", "3", "guard", "evade", "counter"]
+
+EMOJIS_ATK_TYPE = {
+"SLASH": "<:Slash:1479599322336198778>",
+"PIERCE": "<:Pierce:1479599216551657674>",
+"BLUNT": "<:Blunt:1479599265100726332>"
+}
+
+EMOJIS_SIN = {
+    "WRATH": "<:Wrath:1479599693330645083>",
+    "LUST": "<:Lust:1479599653006610563>",
+    "SLOTH": "<:Sloth:1479599606202372178>",
+    "GLUTTONY": "<:Gluttony:1479599563768729792>",
+    "GLOOM": "<:Gloom:1479599509179863091>",
+    "PRIDE": "<:Pride:1479599460538646700>",
+    "ENVY": "<:Envy:1479599410877960377>" 
+}
+
+
 
 # ----------------------
 # Limbus Skill Functions
@@ -154,19 +175,35 @@ def flip_skill(user_id, skill_name,  skill_id, sanity, skill_data):
 # ----------------------
 
 # Save Skill TTRPG Function
-async def save_skill_ttrpg(user_id: str, skill_slot: int, skill_name: str, base_power: int, dice_power: int):
-    result = supabase.table("ttrpg_skills").select("user_skill_id").eq("user_id", user_id).order("user_skill_id", desc=True).limit(1).execute()
+async def save_skill_ttrpg(
+    user_id: str,
+    skill_slot: str,
+    skill_name: str,
+    base_power: int,
+    dice_power: int,
+    attack_type: str = None,
+    sin_affinity: str = None
+):
+    result = supabase.table("ttrpg_skills") \
+        .select("user_skill_id") \
+        .eq("user_id", user_id) \
+        .order("user_skill_id", desc=True) \
+        .limit(1) \
+        .execute()
+
     row = result.data[0] if result.data else None
     user_skill_id = (row["user_skill_id"] if row else 0) + 1
 
-    # Insert the skill
+    # Insert the skill into the database
     supabase.table("ttrpg_skills").insert({
         "user_id": user_id,
         "user_skill_id": user_skill_id,
         "skill_slot": skill_slot,
         "skill_name": skill_name,
         "base_power": base_power,
-        "dice_power": dice_power
+        "dice_power": dice_power,
+        "attack_type": attack_type,
+        "sin_affinity": sin_affinity
     }).execute()
 
     return user_skill_id
@@ -185,7 +222,7 @@ async def load_skill_ttrpg(user_id: str, skill_name: str = None, skill_id: int =
     result = query.execute()
     if result.data:
         row = result.data[0]
-        return row["skill_slot"], row["skill_name"], row["base_power"], row["dice_power"]
+        return row["skill_slot"], row["skill_name"], row["base_power"], row["dice_power"], row["attack_type"], row["sin_affinity"]
     return None
 
 # Delete Skill TTRPG Function
@@ -254,7 +291,7 @@ def apply_sanity_mod(sanity: int, base_power: int, dice_power: int) -> tuple[int
 
 # Helper function to roll ttrpg skills
 async def roll_skill_ttrpg(skill_data, sanity: int):
-    _, skill_name, base_power, dice_power = skill_data
+    _, skill_name, base_power, dice_power, attack_type, sin_affinity = skill_data
 
     mod_base, mod_dice = apply_sanity_mod(sanity, base_power, dice_power)
 
@@ -262,8 +299,19 @@ async def roll_skill_ttrpg(skill_data, sanity: int):
     roll = random.randint(1, abs(mod_dice))
     total = mod_base + (dice_sign * roll)
 
-    return total, roll, mod_base, mod_dice
+    return total, roll, mod_base, mod_dice, attack_type, sin_affinity
 
+# helper function for classifying skill types
+def resolve_skill_role(skill_slot):
+    if skill_slot in ["guard"]:
+        return "guard"
+    elif skill_slot in ["evade"]:
+        return "evade"
+    elif skill_slot in ["counter"]:
+        return "counter"
+    else:
+        return "attack"
+        
 # Sync tree once the bot is ready
 bot = commands.Bot(command_prefix="!", intents=intents)
 
@@ -696,29 +744,121 @@ async def clash_cmd(interaction: discord.Interaction, sanity: int, skill_name: s
 # TTRPG Slash Commands
 # ----------------------
 
-# Save TTRPG skill
+# TTRPG Save Skill / Command
 @bot.tree.command(name="save_skill_ttrpg", description="Save a TTRPG skill for faster rolling")
-@app_commands.describe(
-    skill_slot="Skill slot (1, 2, 3)",
-    skill_name="Name of the skill",
-    base_power="Base power of the skill",
-    dice_power="Maximum dice roll (e.g. 1d8 --> 8)"
-)
-async def save_skill_ttrpg_cmd(
-    interaction: discord.Interaction,
-    skill_slot: int,
-    skill_name: str,
-    base_power: int,
-    dice_power: int
-):
-    user_id = str(interaction.user.id)
-    skill_id = await save_skill_ttrpg(user_id, skill_slot, skill_name, base_power, dice_power)
-    await interaction.response.send_message(
-        f"TTRPG Skill **{skill_name}** saved in slot {skill_slot}! (ID: {skill_id})",
-        ephemeral=True
-    )
+async def save_skill_ttrpg_cmd(interaction: discord.Interaction):
 
-# Delete TTRPG skill
+    class SaveSkillModal(Modal, title="Save Your TTRPG Skill"):
+        skill_name = TextInput(label="Skill Name", placeholder="Enter the skill name", required=True, max_length=50)
+        base_power = TextInput(label="Base Power", placeholder="Enter base power (integer)", required=True, max_length=5)
+        dice_power = TextInput(label="Dice Power", placeholder="Max dice roll (e.g., 1d8 → 8)", required=True, max_length=5)
+
+        async def on_submit(self_modal, modal_interaction: discord.Interaction):
+            try:
+                skill_name_val = self_modal.skill_name.value.strip()
+                base_val = int(self_modal.base_power.value)
+                dice_val = int(self_modal.dice_power.value)
+
+                class SlotSelectView(View):
+                    def __init__(self):
+                        super().__init__(timeout=60)
+                        self.slot = None
+
+                    @discord.ui.select(
+                        placeholder="Choose Skill Slot",
+                        options=[
+                            discord.SelectOption(label="Slot 1", value="1"),
+                            discord.SelectOption(label="Slot 2", value="2"),
+                            discord.SelectOption(label="Slot 3", value="3"),
+                            discord.SelectOption(label="Guard", value="guard"),
+                            discord.SelectOption(label="Evade", value="evade"),
+                            discord.SelectOption(label="Counter", value="counter"),
+                        ]
+                    )
+                    async def slot_select(self, interaction_slot: discord.Interaction, select: discord.ui.Select):
+                        self.slot = select.values[0]
+                        await interaction_slot.response.defer()
+                        self.stop()
+
+                slot_view = SlotSelectView()
+                await modal_interaction.response.send_message(
+                    "Select Skill Slot:",
+                    view=slot_view,
+                    ephemeral=True
+                )
+                await slot_view.wait()
+
+                if not slot_view.slot:
+                    await modal_interaction.followup.send(
+                        "Skill creation cancelled (no slot selected).",
+                        ephemeral=True
+                    )
+                    return
+
+                slot_val = slot_view.slot
+
+                class AttackSinView(View):
+                    def __init__(self):
+                        super().__init__(timeout=60)
+                        self.result = None
+
+                    @discord.ui.select(
+                        placeholder="Choose Attack Type",
+                        options=[discord.SelectOption(label=a.capitalize(), value=a) for a in ATTACK_TYPES]
+                    )
+                    async def attack_select(self, select_inter: discord.Interaction, select: discord.ui.Select):
+                        self.attack = select.values[0].lower()
+                        await select_inter.response.defer()
+                        if hasattr(self, "sin"):
+                            self.result = (self.attack, self.sin)
+                            self.stop()
+
+                    @discord.ui.select(
+                        placeholder="Choose Sin Affinity",
+                        options=[discord.SelectOption(label=s.capitalize(), value=s) for s in SIN_AFFINITIES]
+                    )
+                    async def sin_select(self, select_inter: discord.Interaction, select: discord.ui.Select):
+                        self.sin = select.values[0].lower()
+                        await select_inter.response.defer()
+                        if hasattr(self, "attack"):
+                            self.result = (self.attack, self.sin)
+                            self.stop()
+
+                view = AttackSinView()
+                await modal_interaction.followup.send(
+                    "Select Attack Type and Sin Affinity:",
+                    view=view,
+                    ephemeral=True
+                )
+                await view.wait()
+
+                if not view.result:
+                    await modal_interaction.followup.send(
+                        "Skill creation cancelled (no attack/sin selected).",
+                        ephemeral=True
+                    )
+                    return
+
+                attack_val, sin_val = view.result
+
+                user_id = str(modal_interaction.user.id)
+                skill_id = await save_skill_ttrpg(user_id, slot_val, skill_name_val, base_val, dice_val, attack_val, sin_val)
+
+                await modal_interaction.followup.send(
+                    f"TTRPG Skill **{skill_name_val}** saved in slot {slot_val}!\n"
+                    f"Attack: {attack_val.capitalize()} | Sin Affinity: {sin_val.capitalize()} | ID: {skill_id}",
+                    ephemeral=True
+                )
+
+            except Exception as e:
+                await modal_interaction.response.send_message(
+                    f"Error: {str(e)}",
+                    ephemeral=True
+                )
+
+    await interaction.response.send_modal(SaveSkillModal())
+
+# TTRPG Delete Skill / Command
 @bot.tree.command(name="delete_skill_ttrpg", description="Delete a saved TTRPG skill by name or ID")
 @app_commands.describe(
     skill_name="Skill name (optional if using ID)",
@@ -731,7 +871,7 @@ async def delete_ttrpg_cmd(
 ):
     user_id = str(interaction.user.id)
     if not skill_name and not skill_id:
-        await interaction.response.send_message("Provide either skill name or ID!", ephemeral=True)
+        await interaction.response.send_message("Write skill name or ID!", ephemeral=True)
         return
 
     deleted = await delete_skill_ttrpg(user_id, skill_name, skill_id)
@@ -741,15 +881,14 @@ async def delete_ttrpg_cmd(
         await interaction.response.send_message("Skill not found!", ephemeral=True)
 
 
-# List TTRPG Skills
-
+# TTRPG Skill List / Command
 @bot.tree.command(name="skill_list_ttrpg", description="View your list of TTRPG skills")
 async def skill_list_ttrpg_cmd(interaction: discord.Interaction):
     user_id = str(interaction.user.id)
 
     result = (
         supabase.table("ttrpg_skills")
-        .select("user_skill_id, skill_slot, skill_name, base_power, dice_power")
+        .select("user_skill_id, skill_slot, skill_name, base_power, dice_power, attack_type, sin_affinity")
         .eq("user_id", user_id)
         .order("skill_slot")
         .execute()
@@ -765,9 +904,13 @@ async def skill_list_ttrpg_cmd(interaction: discord.Interaction):
     lines = []
     for s in result.data:
         dice = f"+ 1d{s['dice_power']}" if s["dice_power"] >= 0 else f"- 1d{abs(s['dice_power'])}"
+
+        attack_emoji = EMOJIS_ATK_TYPE.get(s["attack_type"].upper(), "")
+        sin_emoji = EMOJIS_SIN.get(s["sin_affinity"].upper(), "")
+
         lines.append(
             f"**Slot {s['skill_slot']}** | ID `{s['user_skill_id']}`\n"
-            f"{s['skill_name']} → {s['base_power']} {dice}"
+            f"{s['skill_name']} {attack_emoji} {sin_emoji} → {s['base_power']} {dice}"
         )
 
     await interaction.response.send_message(
@@ -775,7 +918,7 @@ async def skill_list_ttrpg_cmd(interaction: discord.Interaction):
         ephemeral=True
     )
 
-# TTRPG Skill Info
+# TTRPG Skill Info / Command
 
 @bot.tree.command(name="skill_info_ttrpg", description="View the details of a TTRPG skill")
 @app_commands.describe(
@@ -805,7 +948,7 @@ async def skill_info_ttrpg_cmd(
         ephemeral=True
     )
 
-# Roll TTRPG skill
+# TTRPG Roll Skill / Command
 @bot.tree.command(name="roll_skill_ttrpg", description="Roll a saved TTRPG skill")
 @app_commands.describe(
     skill_name="Skill name (optional if using ID)",
@@ -821,23 +964,29 @@ async def roll_ttrpg_cmd(
     sanity = max(MIN_SANITY, min(MAX_SANITY, sanity))
 
     user_id = str(interaction.user.id)
+
     skill = await load_skill_ttrpg(user_id, skill_name, skill_id)
+
     if not skill:
         await interaction.response.send_message("Skill not found!", ephemeral=True)
         return
 
-    _, skill_name, base_power, dice_power = skill
+    skill_slot, skill_name, base_power, dice_power, attack_type, sin_affinity = skill
 
     total, roll, mod_base, mod_dice = await roll_skill_ttrpg(skill, sanity)
 
     dice_text = f"- 1d{mod_dice}" if dice_power < 0 else f"+ 1d{mod_dice}"
 
+    # Emoji mapping
+    attack_emoji = EMOJIS_ATK_TYPE.get(attack_type.upper(), "")
+    sin_emoji = EMOJIS_SIN.get(sin_affinity.upper(), "")
+
     await interaction.response.send_message(
-        f"**{skill_name}**\n"
+        f"**{skill_name}** {attack_emoji} {sin_emoji}\n"
         f"{mod_base} {dice_text} ({roll}) → **Total: {total}**"
     )
 
-# Clash TTRPG Skill
+# TTRPG Clash / Command
 @bot.tree.command(name="clash_ttrpg", description="Clash your TTRPG skill against another player's TTRPG skill")
 @app_commands.describe(
     skill_name="Your skill name (optional if using ID)",
@@ -845,12 +994,15 @@ async def roll_ttrpg_cmd(
     sanity="Your sanity (-45 to 45)"
 )
 async def clash_ttrpg_cmd(interaction: discord.Interaction, sanity: int, skill_name: str = None, skill_id: int = None):
+
     original_user = interaction.user
     user1_id = str(original_user.id)
+
     sanity = max(MIN_SANITY, min(MAX_SANITY, sanity))
 
-    # Load original user's skill
+    # Load original skill
     skill1 = await load_skill_ttrpg(user1_id, skill_name, skill_id)
+
     if not skill1:
         await interaction.response.send_message(
             "Your TTRPG skill was not found. Save it first with /save_skill_ttrpg or check your input.",
@@ -858,9 +1010,12 @@ async def clash_ttrpg_cmd(interaction: discord.Interaction, sanity: int, skill_n
         )
         return
 
-    _, skill1_name, base1, dice_power1 = skill1
+    skill1_slot, skill1_name, base1, dice_power1, _, _ = skill1
 
-    # --- Challenge Button + Modal ---
+    # -------------------------
+    # Challenge View
+    # -------------------------
+
     class ChallengeView(View):
         def __init__(self, original_user: discord.User):
             super().__init__(timeout=30)
@@ -869,83 +1024,319 @@ async def clash_ttrpg_cmd(interaction: discord.Interaction, sanity: int, skill_n
 
         @discord.ui.button(label="Join Clash", style=discord.ButtonStyle.primary)
         async def join(self, interaction: discord.Interaction, button: discord.ui.Button):
+
             if interaction.user.id == self.original_user.id:
-                await interaction.response.send_message("You can't challenge yourself!", ephemeral=True)
+                await interaction.response.send_message(
+                    "You can't challenge yourself!",
+                    ephemeral=True
+                )
                 return
 
             parent_view = self
 
             class ChallengeModal(Modal, title="Join TTRPG Clash"):
-                sanity_input = TextInput(label="Sanity (-45 to 45)", placeholder="Enter your sanity first", required=True, max_length=5)
-                skill_input = TextInput(label="Skill name or ID", placeholder="Enter your skill name or ID", required=True, max_length=50)
 
-                async def on_submit(self_modal, modal_interaction: Interaction):
+                sanity_input = TextInput(
+                    label="Sanity (-45 to 45)",
+                    placeholder="Enter your sanity first",
+                    required=True,
+                    max_length=5
+                )
+
+                skill_input = TextInput(
+                    label="Skill name or ID",
+                    placeholder="Enter your skill name or ID",
+                    required=True,
+                    max_length=50
+                )
+
+                async def on_submit(self_modal, modal_interaction: discord.Interaction):
+
                     try:
-                        sanity_val = max(MIN_SANITY, min(MAX_SANITY, int(self_modal.sanity_input.value)))
+                        sanity_val = max(
+                            MIN_SANITY,
+                            min(MAX_SANITY, int(self_modal.sanity_input.value))
+                        )
+
                         skill_val = self_modal.skill_input.value.strip()
                         challenger_id = str(modal_interaction.user.id)
 
                         if skill_val.isdigit():
-                            skill2 = await load_skill_ttrpg(challenger_id, skill_id=int(skill_val))
+                            challenger_skill = await load_skill_ttrpg(
+                                challenger_id,
+                                skill_id=int(skill_val)
+                            )
                         else:
-                            skill2 = await load_skill_ttrpg(challenger_id, skill_name=skill_val)
+                            challenger_skill = await load_skill_ttrpg(
+                                challenger_id,
+                                skill_name=skill_val
+                            )
 
-                        if not skill2:
-                            await modal_interaction.response.send_message("Skill not found! Challenge cancelled.", ephemeral=True)
+                        if not challenger_skill:
+                            await modal_interaction.response.send_message(
+                                "Skill not found! Challenge cancelled.",
+                                ephemeral=True
+                            )
                             parent_view.stop()
                             return
 
-                        _, skill2_name, base2, dice2 = skill2
-                        parent_view.challenger_data = (modal_interaction.user, skill2_name, sanity_val, base2, dice2)
-                        await modal_interaction.response.send_message(f"You joined the clash with **{skill2_name}**!", ephemeral=True)
+                        skill_name2, base2, dice2, _, _, _ = challenger_skill
+
+                        parent_view.challenger_data = (
+                            modal_interaction.user,
+                            skill2_name,
+                            sanity_val,
+                            base2,
+                            dice2,
+                            challenger_skill[0]  # slot
+                        )
+                        await modal_interaction.response.send_message(
+                            f"You joined the clash using **{skill_name2}**!",
+                            ephemeral=True
+                        )
+
                         parent_view.stop()
 
                     except Exception:
-                        await modal_interaction.response.send_message("Invalid input! Challenge cancelled.", ephemeral=True)
+                        await modal_interaction.response.send_message(
+                            "Invalid input! Challenge cancelled.",
+                            ephemeral=True
+                        )
                         parent_view.stop()
 
             await interaction.response.send_modal(ChallengeModal())
 
+    # -------------------------
+    # Start Clash
+    # -------------------------
+
     view = ChallengeView(original_user)
+
     await interaction.response.send_message(
         f"⚔️ CLASH START - {original_user.mention} uses **{skill1_name}**!\nWaiting for a challenger...",
         view=view
     )
 
     await view.wait()
+
     if not view.challenger_data:
-        await interaction.edit_original_response(content="No one challenged in time. Clash cancelled.", view=None)
+        await interaction.edit_original_response(
+            content="No one challenged in time. Clash cancelled.",
+            view=None
+        )
         return
 
-    # --- Both players ready ---
-    user2, skill2_name, sanity2, base2, dice_power2 = view.challenger_data
+    # -------------------------
+    # Both Players Ready
+    # -------------------------
 
-    total1, roll1, mod_base1, mod_dice1 = await roll_skill_ttrpg(skill1, sanity)
-    total2, roll2, mod_base2, mod_dice2 = await roll_skill_ttrpg(
-        (None, skill2_name, base2, dice_power2), sanity2
-    )
+    user2, skill2_name, sanity2, base2, dice_power2, skill2_slot = view.challenger_data
 
-    while total1 == total2:
-        total1, roll1, mod_base1, mod_dice1 = await roll_skill_ttrpg(skill1, sanity)
-        total2, roll2, mod_base2, mod_dice2 = await roll_skill_ttrpg(
-            (None, skill2_name, base2, dice_power2), sanity2
-    )
-    else: winner = original_user if total1 > total2 else user2
+    # -------------------------
+    # Clash Resolution Loop
+    # -------------------------
 
-    await interaction.followup.send(
-        f"{original_user.display_name}\n"
-        f"{mod_base1} + 1d{mod_dice1} ({roll1}) → **Total: {total1}**\n"
-        f"{user2.display_name}\n"
-        f"{mod_base2} + 1d{mod_dice2} ({roll2}) → **Total: {total2}**\n"
-    )
+    step_count = 1
 
-    # Winner power dice
-    total_winner = total1 if total1 > total2 else total2
+    while True:
 
-    await interaction.followup.send(
-        f"**{winner.display_name}**'s Damage Dealt: {total_winner}"
-    )
+        # Unpack skills
+        skill1_slot, skill1_name, base1, dice_power1, _, _ = skill1
 
+        role1 = resolve_skill_role(skill1_slot)
+        role2 = resolve_skill_role(skill2_slot)
+
+        # Roll skills
+        total1, roll1, mod_base1, mod_dice1, _, _ = await roll_skill_ttrpg(
+            skill1,
+            sanity
+        )
+
+        total2, roll2, mod_base2, mod_dice2, _, _ = await roll_skill_ttrpg(
+            (None, skill2_name, base2, dice_power2, skill2_slot, None),
+            sanity2
+        )
+
+        dice_text1 = f"- 1d{mod_dice1}" if dice_power1 < 0 else f"+ 1d{mod_dice1}"
+        dice_text2 = f"- 1d{mod_dice2}" if dice_power2 < 0 else f"+ 1d{mod_dice2}"
+
+        clash_text = (
+            f"⚔️ Clash Step {step_count}\n\n"
+            f"{original_user.display_name} ({role1})\n"
+            f"{mod_base1} {dice_text1} ({roll1}) → **Total: {total1}**\n\n"
+            f"{user2.display_name} ({role2})\n"
+            f"{mod_base2} {dice_text2} ({roll2}) → **Total: {total2}**"
+        )
+
+        # Send clash step message
+        if step_count == 1:
+            await interaction.followup.send(clash_text)
+        else:
+            if interaction.channel:
+                await interaction.channel.send(clash_text)
+
+        # -------------------------
+        # Defensive Skill Resolution
+        # -------------------------
+
+        damage_to_user1 = total2
+        damage_to_user2 = total1
+
+        shield_user1 = 0
+        shield_user2 = 0
+        counter_damage_user1 = 0
+        counter_damage_user2 = 0
+
+        evade_result_text = ""
+
+        # -------------------------
+        # Evade resolution
+        # -------------------------
+
+        if role1 == "evade" and role2 == "attack":
+
+            if total1 > total2:
+                damage_to_user1 = 0
+                evade_result_text += f"{original_user.display_name} successfully evaded!\n"
+            else:
+                damage_to_user1 = total2
+                evade_result_text += f"{original_user.display_name} failed to evade and took {damage_to_user1} {attack_emoji1} {sin_emoji1} Damage!\n"
+
+        if role2 == "evade" and role1 == "attack":
+
+            if total2 > total1:
+                damage_to_user2 = 0
+                evade_result_text += f"{user2.display_name} successfully evaded!\n"
+            else:
+                damage_to_user2 = total1
+                evade_result_text += f"{user2.display_name} failed to evade and took {damage_to_user2} {attack_emoji2} {sin_emoji2} Damage!\n"
+
+        # -------------------------
+        # Guard resolution
+        # -------------------------
+
+        if role1 == "guard":
+            shield_user1 = total1
+            damage_to_user1 = total2
+
+        if role2 == "guard":
+            shield_user2 = total2
+            damage_to_user2 = total1
+
+        # -------------------------
+        # Counter resolution
+        # -------------------------
+
+        attack_emoji1 = EMOJIS_ATK_TYPE.get(
+            skill1[4].upper() if skill1[4] else "",
+            ""
+        )
+
+        sin_emoji1 = EMOJIS_SIN.get(
+            skill1[5].upper() if skill1[5] else "",
+            ""
+        )
+
+        attack_emoji2 = EMOJIS_ATK_TYPE.get(
+            skill2_slot.upper() if isinstance(skill2_slot, str) else "",
+            ""
+        )
+
+        sin_emoji2 = EMOJIS_SIN.get(
+            skill2_name.upper() if skill2_name else "",
+            ""
+        )
+
+        if role1 == "counter":
+            counter_damage_user1 = total1
+            damage_to_user1 = total2
+
+            if interaction.channel:
+                await interaction.channel.send(
+                    f"Takes {damage_to_user1} damage\n"
+                    f"Counters for {counter_damage_user1} damage {attack_emoji1} {sin_emoji1} "
+                )
+
+        if role2 == "counter":
+            counter_damage_user2 = total2
+            damage_to_user2 = total1
+
+            if interaction.channel:
+                await interaction.channel.send(
+                    f"Takes {damage_to_user2} damage\n"
+                    f"Counters for {counter_damage_user2} {attack_emoji2} {sin_emoji2} damage"
+                )
+
+        # -------------------------
+        # Report defensive outcome
+        # -------------------------
+
+        outcome_text = "Defensive Outcome:\n"
+
+        if evade_result_text:
+            outcome_text += evade_result_text + "\n"
+
+        if shield_user1:
+            outcome_text += (
+                f"{original_user.display_name} gains {shield_user1} Shield\n"
+                f"{original_user.display_name} takes {damage_to_user1} {attack_emoji1} {sin_emoji1} damage\n"
+            )
+
+        if shield_user2:
+            outcome_text += (
+                f"{user2.display_name} gains {shield_user2} Shield\n"
+                f"{user2.display_name} takes {damage_to_user2} {attack_emoji2} {sin_emoji2} damage\n"
+            )
+
+        if interaction.channel:
+            await interaction.channel.send(outcome_text)
+
+            # -------------------------
+            # Exit Conditions
+            # -------------------------
+
+            # Defensive skills end clash immediately
+            if role1 in ["guard", "evade", "counter"] or role2 in ["guard", "evade", "counter"]:
+                break
+
+            # Attack vs Attack clash logic
+            if role1 == "attack" and role2 == "attack":
+                if total1 != total2:
+                    break
+
+            # Safety escape (prevents infinite loops)
+            if step_count > 50:
+                break
+
+            step_count += 1
+
+    # -------------------------
+    # Winner Resolution Report
+    # -------------------------
+
+    # Only report winner damage if clash was pure attack vs attack
+    pure_attack_clash = (role1 == "attack" and role2 == "attack")
+
+    if pure_attack_clash:
+
+        winner = original_user if total1 > total2 else user2
+        total_winner = max(total1, total2)
+
+        if interaction.channel:
+            # Add attack type and sin affinity emojis
+            attack_emoji = EMOJIS_ATK_TYPE.get(
+                skill1[4].upper() if skill1[4] else "",
+                ""
+            )
+
+            sin_emoji = EMOJIS_SIN.get(
+                skill1[5].upper() if skill1[5] else "",
+                ""
+            )
+
+            await interaction.channel.send(
+                f"🏆 **{winner.display_name}**'s Damage Dealt {attack_emoji} {sin_emoji}: {total_winner}"
+            )
 
 # Run the bot
 bot.run(TOKEN)
