@@ -385,6 +385,44 @@ async def flip_cmd(interaction: discord.Interaction, sanity: int, skill_name: st
         f"**{skill_name}** \n{trail}\n**Final Power:** {total_power}"
     )
 
+# Skill List / Command
+
+@bot.tree.command(name="skill_list", description="View your list of saved skills")
+async def skill_list_cmd(interaction: discord.Interaction):
+    user_id = str(interaction.user.id)
+
+    result = (
+        supabase.table("skills")
+        .select("user_skill_id, skill_name, base_power, coin_power, coins, unbreakable")
+        .eq("user_id", user_id)
+        .order("user_skill_id")
+        .execute()
+    )
+
+    if not result.data:
+        await interaction.response.send_message(
+            "You have no saved skills.",
+            ephemeral=True
+        )
+        return
+
+    lines = []
+    for s in result.data:
+        normal = s["coins"] - s["unbreakable"]
+
+        lines.append(
+            f"**ID `{s['user_skill_id']}`**\n"
+            f"{s['skill_name']} → {s['base_power']} + {s['coin_power']} per Head\n"
+            f"Coins: {normal} Normal | {s['unbreakable']} Unbreakable"
+        )
+
+    await interaction.response.send_message(
+        "**__Skill List__**\n\n" + "\n\n".join(lines),
+        ephemeral=True
+    )
+
+
+
 # Clash / Command
 @bot.tree.command(name="clash", description="Clash your skill against another player's skill")
 @app_commands.describe(
