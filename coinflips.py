@@ -1027,7 +1027,7 @@ async def clash_ttrpg_cmd(interaction: discord.Interaction, sanity: int, skill_n
         )
         return
 
-    skill1_slot, skill1_name, base1, dice_power1, _, _ = skill1
+    skill1_slot, skill1_name, base1, dice_power1, attack1, sin1 = skill1
 
     # -------------------------
     # Challenge View
@@ -1097,15 +1097,18 @@ async def clash_ttrpg_cmd(interaction: discord.Interaction, sanity: int, skill_n
                             parent_view.stop()
                             return
 
-                        skill_name2, base2, dice2, _, _, _ = challenger_skill
+                        # Save ALL skill info properly
+                        skill_name2, base2, dice2, attack2, sin2, slot2 = challenger_skill
 
                         parent_view.challenger_data = (
                             modal_interaction.user,
-                            skill2_name,
+                            skill_name2,
                             sanity_val,
                             base2,
                             dice2,
-                            challenger_skill[0]  # slot
+                            attack2,
+                            sin2,
+                            slot2
                         )
                         await modal_interaction.response.send_message(
                             f"You joined the clash using **{skill_name2}**!",
@@ -1147,7 +1150,7 @@ async def clash_ttrpg_cmd(interaction: discord.Interaction, sanity: int, skill_n
     # Both Players Ready
     # -------------------------
 
-    user2, skill2_name, sanity2, base2, dice_power2, skill2_slot = view.challenger_data
+    user2, skill2_name, sanity2, base2, dice_power2, attack2, sin2, skill2_slot = view.challenger_data
 
     # -------------------------
     # Clash Resolution Loop
@@ -1158,34 +1161,39 @@ async def clash_ttrpg_cmd(interaction: discord.Interaction, sanity: int, skill_n
     while True:
 
         # Unpack skills
-        skill1_slot, skill1_name, base1, dice_power1, _, _ = skill1
+        skill1_slot, skill1_name, base1, dice_power1, attack1, sin1 = skill1
 
         role1 = resolve_skill_role(skill1_slot)
         role2 = resolve_skill_role(skill2_slot)
 
         # Roll skills
-        total1, roll1, mod_base1, mod_dice1, _, _ = await roll_skill_ttrpg(
+        total1, roll1, mod_base1, mod_dice1, atk1_db, sin1_db = await roll_skill_ttrpg(
             skill1,
             sanity
         )
 
-        total2, roll2, mod_base2, mod_dice2, _, _ = await roll_skill_ttrpg(
-            (None, skill2_name, base2, dice_power2, skill2_slot, None),
+        total2, roll2, mod_base2, mod_dice2, atk2_db, sin2_db = await roll_skill_ttrpg(
+            (None, skill2_name, base2, dice_power2, attack2, sin2),
             sanity2
         )
+
+        attack_emoji1 = EMOJIS_ATK_TYPE.get((atk1_db or "").upper(), "")
+        sin_emoji1 = EMOJIS_SIN.get((sin1_db or "").upper(), "")
+
+        attack_emoji2 = EMOJIS_ATK_TYPE.get((attack2 or "").upper(), "")
+        sin_emoji2 = EMOJIS_SIN.get((sin2 or "").upper(), "")
 
         dice_text1 = f"- 1d{mod_dice1}" if dice_power1 < 0 else f"+ 1d{mod_dice1}"
         dice_text2 = f"- 1d{mod_dice2}" if dice_power2 < 0 else f"+ 1d{mod_dice2}"
 
         clash_text = (
             f"⚔️ Clash Step {step_count}\n\n"
-            f"{original_user.display_name} ({role1})\n"
+            f"{original_user.display_name} ({role1}) {attack_emoji1}{sin_emoji1}\n"
             f"{mod_base1} {dice_text1} ({roll1}) → **Total: {total1}**\n\n"
-            f"{user2.display_name} ({role2})\n"
+            f"{user2.display_name} ({role2}) {attack_emoji2}{sin_emoji2}\n"
             f"{mod_base2} {dice_text2} ({roll2}) → **Total: {total2}**"
         )
 
-        # Send clash step message
         if step_count == 1:
             await interaction.followup.send(clash_text)
         else:
@@ -1198,134 +1206,65 @@ async def clash_ttrpg_cmd(interaction: discord.Interaction, sanity: int, skill_n
 
         damage_to_user1 = total2
         damage_to_user2 = total1
-
         shield_user1 = 0
         shield_user2 = 0
-        counter_damage_user1 = 0
-        counter_damage_user2 = 0
 
-        evade_result_text = ""
+        outcome_text = "Defensive Outcome:\n"
 
-        # -------------------------
-        # Evade resolution
-        # -------------------------
-
+        # ---------- Evade ----------
         if role1 == "evade" and role2 == "attack":
-
             if total1 > total2:
                 damage_to_user1 = 0
-                evade_result_text += f"{original_user.display_name} successfully evaded!\n"
+                outcome_text += f"{original_user.display_name} successfully evaded!\n"
             else:
-                damage_to_user1 = total2
-                evade_result_text += f"{original_user.display_name} failed to evade and took {damage_to_user1} {attack_emoji1} {sin_emoji1} Damage!\n"
+                outcome_text += f"{original_user.display_name} failed to evade and took {damage_to_user1} {attack_emoji2}{sin_emoji2} damage!\n"
 
         if role2 == "evade" and role1 == "attack":
-
             if total2 > total1:
                 damage_to_user2 = 0
-                evade_result_text += f"{user2.display_name} successfully evaded!\n"
+                outcome_text += f"{user2.display_name} successfully evaded!\n"
             else:
-                damage_to_user2 = total1
-                evade_result_text += f"{user2.display_name} failed to evade and took {damage_to_user2} {attack_emoji2} {sin_emoji2} Damage!\n"
+                outcome_text += f"{user2.display_name} failed to evade and took {damage_to_user2} {attack_emoji1}{sin_emoji1} damage!\n"
 
-        # -------------------------
-        # Guard resolution
-        # -------------------------
-
+        # ---------- Guard ----------
         if role1 == "guard":
             shield_user1 = total1
             damage_to_user1 = total2
+            outcome_text += f"{original_user.display_name} gains {shield_user1} shield and takes {damage_to_user1} {attack_emoji2}{sin_emoji2} damage\n"
 
         if role2 == "guard":
             shield_user2 = total2
             damage_to_user2 = total1
+            outcome_text += f"{user2.display_name} gains {shield_user2} shield and takes {damage_to_user2} {attack_emoji1}{sin_emoji1} damage\n"
 
-        # -------------------------
-        # Counter resolution
-        # -------------------------
-
-        attack_emoji1 = EMOJIS_ATK_TYPE.get(
-            skill1[4].upper() if skill1[4] else "",
-            ""
-        )
-
-        sin_emoji1 = EMOJIS_SIN.get(
-            skill1[5].upper() if skill1[5] else "",
-            ""
-        )
-
-        attack_emoji2 = EMOJIS_ATK_TYPE.get(
-            skill2_slot.upper() if isinstance(skill2_slot, str) else "",
-            ""
-        )
-
-        sin_emoji2 = EMOJIS_SIN.get(
-            skill2_name.upper() if skill2_name else "",
-            ""
-        )
-
+        # ---------- Counter ----------
         if role1 == "counter":
             counter_damage_user1 = total1
             damage_to_user1 = total2
-
-            if interaction.channel:
-                await interaction.channel.send(
-                    f"Takes {damage_to_user1} damage\n"
-                    f"Counters for {counter_damage_user1} damage {attack_emoji1} {sin_emoji1} "
-                )
+            outcome_text += f"{original_user.display_name} takes {damage_to_user1} damage and counters for {counter_damage_user1} {attack_emoji1}{sin_emoji1} damage\n"
 
         if role2 == "counter":
             counter_damage_user2 = total2
             damage_to_user2 = total1
-
-            if interaction.channel:
-                await interaction.channel.send(
-                    f"Takes {damage_to_user2} damage\n"
-                    f"Counters for {counter_damage_user2} {attack_emoji2} {sin_emoji2} damage"
-                )
-
-        # -------------------------
-        # Report defensive outcome
-        # -------------------------
-
-        outcome_text = "Defensive Outcome:\n"
-
-        if evade_result_text:
-            outcome_text += evade_result_text + "\n"
-
-        if shield_user1:
-            outcome_text += (
-                f"{original_user.display_name} gains {shield_user1} Shield\n"
-                f"{original_user.display_name} takes {damage_to_user1} {attack_emoji1} {sin_emoji1} damage\n"
-            )
-
-        if shield_user2:
-            outcome_text += (
-                f"{user2.display_name} gains {shield_user2} Shield\n"
-                f"{user2.display_name} takes {damage_to_user2} {attack_emoji2} {sin_emoji2} damage\n"
-            )
+            outcome_text += f"{user2.display_name} takes {damage_to_user2} damage and counters for {counter_damage_user2} {attack_emoji2}{sin_emoji2} damage\n"
 
         if interaction.channel:
             await interaction.channel.send(outcome_text)
 
-            # -------------------------
-            # Exit Conditions
-            # -------------------------
+        # -------------------------
+        # Exit Conditions
+        # -------------------------
 
-            # Defensive skills end clash immediately
-            if role1 in ["guard", "evade", "counter"] or role2 in ["guard", "evade", "counter"]:
-                break
+        if role1 in ["guard", "evade", "counter"] or role2 in ["guard", "evade", "counter"]:
+            break
 
-            # Attack vs Attack clash logic
-            if role1 == "attack" and role2 == "attack":
-                if total1 != total2:
-                    break
+        if role1 == "attack" and role2 == "attack" and total1 != total2:
+            break
 
-            # Safety escape (prevents infinite loops)
-            if step_count > 50:
-                break
+        if step_count > 50:
+            break
 
-            step_count += 1
+        step_count += 1
 
     # -------------------------
     # Winner Resolution Report
@@ -1335,24 +1274,15 @@ async def clash_ttrpg_cmd(interaction: discord.Interaction, sanity: int, skill_n
     pure_attack_clash = (role1 == "attack" and role2 == "attack")
 
     if pure_attack_clash:
-
         winner = original_user if total1 > total2 else user2
         total_winner = max(total1, total2)
 
+        attack_emoji = EMOJIS_ATK_TYPE.get((skill1[4] or "").upper(), "")
+        sin_emoji = EMOJIS_SIN.get((skill1[5] or "").upper(), "")
+
         if interaction.channel:
-            # Add attack type and sin affinity emojis
-            attack_emoji = EMOJIS_ATK_TYPE.get(
-                skill1[4].upper() if skill1[4] else "",
-                ""
-            )
-
-            sin_emoji = EMOJIS_SIN.get(
-                skill1[5].upper() if skill1[5] else "",
-                ""
-            )
-
             await interaction.channel.send(
-                f"🏆 **{winner.display_name}**'s Damage Dealt {attack_emoji} {sin_emoji}: {total_winner}"
+                f"🏆 **{winner.display_name}**'s Damage Dealt {attack_emoji}{sin_emoji}: {total_winner}"
             )
 
 # Run the bot
