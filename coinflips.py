@@ -1098,7 +1098,7 @@ async def clash_ttrpg_cmd(interaction: discord.Interaction, sanity: int, skill_n
                             return
 
                         # Save ALL skill info properly
-                        skill_name2, base2, dice2, attack2, sin2, slot2 = challenger_skill
+                        slot2, skill_name2, base2, dice2, attack2, sin2 = challenger_skill
 
                         parent_view.challenger_data = (
                             modal_interaction.user,
