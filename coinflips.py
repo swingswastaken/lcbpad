@@ -405,23 +405,26 @@ async def skill_list_cmd(interaction: discord.Interaction):
             ephemeral=True
         )
         return
-
     lines = []
     for s in result.data:
-        normal = s["coins"] - s["unbreakable"]
+        normal_coins = s["coins"] - s["unbreakable"]
+
+        coin_display = (
+            f"{HEAD} " * normal_coins +
+            f"{UNBREAKABLE_HEAD} " * s["unbreakable"]
+        )
 
         lines.append(
             f"**ID `{s['user_skill_id']}`**\n"
             f"{s['skill_name']}\n" 
-            f"{s['base_power']} Base Power {s['coin_power']} Coin Power\n"
-            f"{normal} Coins | {s['unbreakable']} Unbreakable Coins"
+            f"{s['base_power']} Base Power & {s['coin_power']} Coin Power\n"
+            f"{coin_display}"
         )
 
     await interaction.response.send_message(
         "**__Skill List__**\n\n" + "\n\n".join(lines),
         ephemeral=True
     )
-
 
 
 # Clash / Command
