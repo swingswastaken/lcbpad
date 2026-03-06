@@ -412,8 +412,9 @@ async def skill_list_cmd(interaction: discord.Interaction):
 
         lines.append(
             f"**ID `{s['user_skill_id']}`**\n"
-            f"{s['skill_name']} → {s['base_power']} + {s['coin_power']} per Head\n"
-            f"Coins: {normal} Normal | {s['unbreakable']} Unbreakable"
+            f"{s['skill_name']}\n" 
+            f"{s['base_power']} Base Power + {s['coin_power']} Coin Power\n"
+            f"{normal} Coins | {s['unbreakable']} Unbreakable Coins"
         )
 
     await interaction.response.send_message(
