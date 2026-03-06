@@ -407,7 +407,7 @@ async def skill_list_cmd(interaction: discord.Interaction):
         return
     lines = []
     for s in result.data:
-        normal_coins = s["coins"] - s["unbreakable"]
+        normal_coins = max(0, s["coins"] - s["unbreakable"])
 
         coin_display = (
             f"{TAIL} " * normal_coins +
@@ -426,6 +426,66 @@ async def skill_list_cmd(interaction: discord.Interaction):
         ephemeral=True
     )
 
+# Skill Info / Command
+
+@bot.tree.command(name="skill_info", description="View the information about a saved skill")
+@app_commands.describe(
+    skill_name="Skill name (optional if using ID)",
+    skill_id="Skill ID (optional if using name)"
+)
+async def skill_info_cmd(
+    interaction: discord.Interaction,
+    skill_name: str = None,
+    skill_id: int = None
+):
+
+    user_id = str(interaction.user.id)
+
+    if skill_name is None and skill_id is None:
+        await interaction.response.send_message(
+            "Write the skill name or skill ID.",
+            ephemeral=True
+        )
+        return
+
+    # Query database (same pattern as your load_skill function but inline for consistency)
+    query = (
+        supabase.table("skills")
+        .select("user_skill_id, skill_name, base_power, coin_power, coins, unbreakable")
+        .eq("user_id", user_id)
+    )
+
+    if skill_id is not None:
+        query = query.eq("user_skill_id", skill_id)
+    else:
+        query = query.eq("skill_name", skill_name)
+
+    res = query.limit(1).execute()
+
+    if not res.data:
+        await interaction.response.send_message(
+            "Skill not found.",
+            ephemeral=True
+        )
+        return
+
+    s = res.data[0]
+
+    normal_coins = max(0, s["coins"] - s["unbreakable"])
+
+    coin_display = (
+        f"{TAIL} " * normal_coins +
+        f"{UNBREAKABLE_HEAD} " * s["unbreakable"]
+    )
+
+    await interaction.response.send_message(
+        f"**{s['skill_name']}**\n\n"
+        f"ID `{s['user_skill_id']}`\n"
+        f"{s['base_power']} Base Power\n"
+        f"{s['coin_power']} Coin Power\n\n"
+        f"Coins:\n{coin_display}",
+        ephemeral=True
+    )
 
 # Clash / Command
 @bot.tree.command(name="clash", description="Clash your skill against another player's skill")
