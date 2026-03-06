@@ -930,21 +930,33 @@ async def skill_info_ttrpg_cmd(
     skill_name: str = None,
     skill_id: int = None
 ):
+
     user_id = str(interaction.user.id)
     skill = await load_skill_ttrpg(user_id, skill_name, skill_id)
 
     if not skill:
-        await interaction.response.send_message("Skill not found.", ephemeral=True)
+        await interaction.response.send_message(
+            "Skill not found.",
+            ephemeral=True
+        )
         return
 
-    _, name, base, dice = skill
+    skill_slot, name, base, dice, attack_type, sin_affinity = skill
+
     dice_txt = f"1d{dice}" if dice >= 0 else f"-1d{abs(dice)}"
+
+    # Emoji mapping
+    attack_emoji = EMOJIS_ATK_TYPE.get(attack_type.upper() if attack_type else "", "")
+    sin_emoji = EMOJIS_SIN.get(sin_affinity.upper() if sin_affinity else "", "")
 
     await interaction.response.send_message(
         f"**__Skill Info__**\n\n"
-        f"**{name}**\n"
+        f"**{name}** {attack_emoji} {sin_emoji}\n"
+        f"Slot: `{skill_slot}`\n"
         f"Base Power: `{base}`\n"
-        f"Dice: `{dice_txt}`",
+        f"Dice: `{dice_txt}`\n"
+        f"Attack Type: `{attack_type.capitalize() if attack_type else 'None'}`\n"
+        f"Sin Affinity: `{sin_affinity.capitalize() if sin_affinity else 'None'}`",
         ephemeral=True
     )
 
@@ -961,6 +973,7 @@ async def roll_ttrpg_cmd(
     skill_name: str = None,
     skill_id: int = None,
 ):
+
     sanity = max(MIN_SANITY, min(MAX_SANITY, sanity))
 
     user_id = str(interaction.user.id)
@@ -971,18 +984,22 @@ async def roll_ttrpg_cmd(
         await interaction.response.send_message("Skill not found!", ephemeral=True)
         return
 
-    skill_slot, skill_name, base_power, dice_power, attack_type, sin_affinity = skill
+    # ⭐ DO NOT unpack skill here
+    total, roll, mod_base, mod_dice, attack_type, sin_affinity = await roll_skill_ttrpg(
+        skill,
+        sanity
+    )
 
-    total, roll, mod_base, mod_dice = await roll_skill_ttrpg(skill, sanity)
+    dice_power = skill[3]
 
     dice_text = f"- 1d{mod_dice}" if dice_power < 0 else f"+ 1d{mod_dice}"
 
     # Emoji mapping
-    attack_emoji = EMOJIS_ATK_TYPE.get(attack_type.upper(), "")
-    sin_emoji = EMOJIS_SIN.get(sin_affinity.upper(), "")
+    attack_emoji = EMOJIS_ATK_TYPE.get(attack_type.upper() if attack_type else "", "")
+    sin_emoji = EMOJIS_SIN.get(sin_affinity.upper() if sin_affinity else "", "")
 
     await interaction.response.send_message(
-        f"**{skill_name}** {attack_emoji} {sin_emoji}\n"
+        f"**{skill[1]}** {attack_emoji} {sin_emoji}\n"
         f"{mod_base} {dice_text} ({roll}) → **Total: {total}**"
     )
 
