@@ -36,16 +36,21 @@ UNBREAKABLE_HEAD = "<:limbus_unbreakable_heads:1463921190228721684>"
 UNBREAKABLE_TAIL = "<:limbus_unbreakable_tails:1463921283946512566>"
 MAX_SANITY = 45
 MIN_SANITY = -45
-ATTACK_TYPES = ["Slash", "Pierce", "Blunt", "Evade", "Guard"]
+ATTACK_TYPES = ["Slash", "Pierce", "Blunt"]
+DEF_ROLES = ["Guard", "Evade", "Counter"]
 SIN_AFFINITIES = ["Wrath", "Lust", "Sloth", "Gluttony", "Gloom", "Pride", "Envy"]
 SLOTS = ["1", "2", "3", "Guard", "Evade", "Counter"]
 
 EMOJIS_ATK_TYPE = {
 "SLASH": "<:Slash:1479599322336198778>",
 "PIERCE": "<:Pierce:1479599216551657674>",
-"BLUNT": "<:Blunt:1479599265100726332>",
-"GUARD": "<:Guard:1479784787458916392>",
-"EVADE": "<:Evade:1479784818769399849>"
+"BLUNT": "<:Blunt:1479599265100726332>"
+}
+
+EMOJIS_ROLE = {
+    "GUARD": "<:Guard:1479784787458916392>",
+    "EVADE": "<:Evade:1479784818769399849>",
+    "COUNTER": "<:Counter:1479784856916328574>"
 }
 
 EMOJIS_SIN = {
@@ -59,10 +64,25 @@ EMOJIS_SIN = {
 }
 
 # helper function for emojis
-def get_skill_emojis(attack_type, sin_affinity):
-    attack_emoji = EMOJIS_ATK_TYPE.get((attack_type or "").upper(), "")
-    sin_emoji = EMOJIS_SIN.get((sin_affinity or "").upper(), "")
-    return attack_emoji, sin_emoji
+def get_skill_emojis(attack_type=None, sin_affinity=None, role=None):
+
+    role = (role or "").upper()
+    attack_type = (attack_type or "").upper()
+    sin_affinity = (sin_affinity or "").upper()
+
+    emoji_part = ""
+
+    # Role emoji has priority
+    if role and role in EMOJIS_ROLE:
+        emoji_part += EMOJIS_ROLE[role]
+
+    # If no role emoji, fallback to attack type emoji
+    elif attack_type and attack_type in EMOJIS_ATK_TYPE:
+        emoji_part += EMOJIS_ATK_TYPE[attack_type]
+
+    sin_emoji = EMOJIS_SIN.get(sin_affinity, "")
+
+    return emoji_part, sin_emoji
 
 # ----------------------
 # Limbus Skill Functions
@@ -214,7 +234,7 @@ async def save_skill_ttrpg(
 
     return user_skill_id
 
-# Load Skill TTRPG Function (for /flip_ttrpg)
+# Load Skill TTRPG Function (for /roll_ttrpg)
 async def load_skill_ttrpg(user_id: str, skill_name: str = None, skill_id: int = None):
     query = supabase.table("ttrpg_skills").select("*").eq("user_id", user_id)
 
@@ -237,7 +257,7 @@ async def delete_skill_ttrpg(user_id: str, skill_name: str = None, skill_id: int
     if not skill:
         return None
 
-    skill_slot, skill_name, _, _ = skill
+    skill_slot, skill_name = skill[0], skill[1]
 
     if skill_id is not None:
         supabase.table("ttrpg_skills").delete().eq("user_id", user_id).eq("user_skill_id", skill_id).execute()
@@ -297,7 +317,7 @@ def apply_sanity_mod(sanity: int, base_power: int, dice_power: int) -> tuple[int
 
 # Helper function to roll ttrpg skills
 async def roll_skill_ttrpg(skill_data, sanity: int):
-    _, skill_name, base_power, dice_power, attack_type, sin_affinity = skill_data
+    skill_slot, skill_name, base_power, dice_power, attack_type, sin_affinity = skill_data
 
     mod_base, mod_dice = apply_sanity_mod(sanity, base_power, dice_power)
 
@@ -305,18 +325,33 @@ async def roll_skill_ttrpg(skill_data, sanity: int):
     roll = random.randint(1, abs(mod_dice))
     total = mod_base + (dice_sign * roll)
 
-    return total, roll, mod_base, mod_dice, attack_type, sin_affinity
+    role = resolve_skill_role(skill_slot)
+
+    return total, roll, mod_base, mod_dice, attack_type, sin_affinity, role
 
 # helper function for classifying skill types
 def resolve_skill_role(skill_slot):
-    if skill_slot in ["guard"]:
-        return "guard"
-    elif skill_slot in ["evade"]:
-        return "evade"
-    elif skill_slot in ["counter"]:
-        return "counter"
-    else:
+    if not skill_slot:
         return "attack"
+
+    slot = str(skill_slot).lower()
+
+    if slot == "guard":
+        return "guard"
+    if slot == "evade":
+        return "evade"
+    if slot == "counter":
+        return "counter"
+
+    return "attack"
+
+# helper for gathering combat info
+def get_combat_identity(skill_slot, attack_type, sin_affinity):
+    role = resolve_skill_role(skill_slot)
+
+    visual_type = role if role in ["guard", "evade", "counter"] else attack_type
+
+    return get_skill_emojis(visual_type, sin_affinity)
         
 # Sync tree once the bot is ready
 bot = commands.Bot(command_prefix="!", intents=intents)
@@ -767,6 +802,9 @@ async def save_skill_ttrpg_cmd(interaction: discord.Interaction):
                 base_val = int(self_modal.base_power.value)
                 dice_val = int(self_modal.dice_power.value)
 
+                # -------------------------
+                # Slot Selection
+                # -------------------------
                 class SlotSelectView(View):
                     def __init__(self):
                         super().__init__(timeout=60)
@@ -805,61 +843,90 @@ async def save_skill_ttrpg_cmd(interaction: discord.Interaction):
 
                 slot_val = slot_view.slot
 
+                attack_val = None
+                sin_val = None
+
                 class AttackSinView(View):
                     def __init__(self):
                         super().__init__(timeout=60)
+                        self.attack = None
+                        self.sin = None
                         self.result = None
 
-                    @discord.ui.select(
-                        placeholder="Choose Attack Type",
-                        options=[discord.SelectOption(label=a.capitalize(), value=a) for a in ATTACK_TYPES]
-                    )
-                    async def attack_select(self, select_inter: discord.Interaction, select: discord.ui.Select):
-                        self.attack = select.values[0].lower()
-                        await select_inter.response.defer()
-                        if hasattr(self, "sin"):
-                            self.result = (self.attack, self.sin)
-                            self.stop()
+                        # Sin selector (always present)
+                        sin_select = discord.ui.Select(
+                            placeholder="Choose Sin Affinity",
+                            options=[discord.SelectOption(label=s.capitalize(), value=s) for s in SIN_AFFINITIES]
+                        )
 
-                    @discord.ui.select(
-                        placeholder="Choose Sin Affinity",
-                        options=[discord.SelectOption(label=s.capitalize(), value=s) for s in SIN_AFFINITIES]
-                    )
-                    async def sin_select(self, select_inter: discord.Interaction, select: discord.ui.Select):
-                        self.sin = select.values[0].lower()
-                        await select_inter.response.defer()
-                        if hasattr(self, "attack"):
-                            self.result = (self.attack, self.sin)
-                            self.stop()
+                        async def sin_callback(interaction: discord.Interaction):
+                            self.sin = sin_select.values[0].lower()
+                            await interaction.response.defer()
+
+                            if slot_val in ["guard", "evade"]:
+                                self.result = (None, self.sin)
+                                self.stop()
+                            elif self.attack is not None:
+                                self.result = (self.attack, self.sin)
+                                self.stop()
+
+                        sin_select.callback = sin_callback
+                        self.add_item(sin_select)
+
+                        # Attack selector ONLY for non-defensive slots
+                        if slot_val not in ["guard", "evade"]:
+                            attack_select = discord.ui.Select(
+                                placeholder="Choose Attack Type",
+                                options=[discord.SelectOption(label=a.capitalize(), value=a) for a in ATTACK_TYPES]
+                            )
+
+                            async def attack_callback(interaction: discord.Interaction):
+                                self.attack = attack_select.values[0].lower()
+                                await interaction.response.defer()
+
+                                if self.sin is not None:
+                                    self.result = (self.attack, self.sin)
+                                    self.stop()
+
+                            attack_select.callback = attack_callback
+                            self.add_item(attack_select)
+
 
                 view = AttackSinView()
+
                 await modal_interaction.followup.send(
-                    "Select Attack Type and Sin Affinity:",
+                    "Select Sin Affinity" if slot_val in ["guard", "evade"] else "Select Attack Type and Sin Affinity:",
                     view=view,
                     ephemeral=True
                 )
+
                 await view.wait()
 
                 if not view.result:
                     await modal_interaction.followup.send(
-                        "Skill creation cancelled (no attack/sin selected).",
+                        "Skill creation cancelled (no sin/attack selected).",
                         ephemeral=True
                     )
                     return
 
                 attack_val, sin_val = view.result
 
+                # -------------------------
+                # Save skill in database
+                # -------------------------
                 user_id = str(modal_interaction.user.id)
-                skill_id = await save_skill_ttrpg(user_id, slot_val, skill_name_val, base_val, dice_val, attack_val, sin_val)
+                skill_id = await save_skill_ttrpg(
+                    user_id, slot_val, skill_name_val, base_val, dice_val, attack_val, sin_val
+                )
 
                 await modal_interaction.followup.send(
                     f"TTRPG Skill **{skill_name_val}** saved in slot {slot_val}!\n"
-                    f"Attack: {attack_val.capitalize()} | Sin Affinity: {sin_val.capitalize()} | ID: {skill_id}",
+                    f"{'Attack: ' + attack_val.capitalize() + ' | Sin Affinity: ' + sin_val.capitalize() if attack_val else 'Defensive Skill'} | ID: {skill_id}",
                     ephemeral=True
                 )
 
             except Exception as e:
-                await modal_interaction.response.send_message(
+                await modal_interaction.followup.send(
                     f"Error: {str(e)}",
                     ephemeral=True
                 )
@@ -878,20 +945,61 @@ async def delete_ttrpg_cmd(
     skill_id: int = None
 ):
     user_id = str(interaction.user.id)
+
     if not skill_name and not skill_id:
         await interaction.response.send_message("Write skill name or ID!", ephemeral=True)
         return
 
+    # Load skill to get the actual name
+    skill_data = await load_skill_ttrpg(user_id, skill_name, skill_id)
+    if not skill_data:
+        await interaction.response.send_message("Skill not found!", ephemeral=True)
+        return
+
+    actual_name = skill_data[1] if isinstance(skill_data, (list, tuple)) else skill_data["skill_name"]
+
+    # Confirmation view
+    class ConfirmDeleteView(View):
+        def __init__(self):
+            super().__init__(timeout=60)
+            self.confirmed = False
+
+        @discord.ui.button(label="Yes", style=discord.ButtonStyle.danger)
+        async def yes(self, inter: discord.Interaction, button: discord.ui.Button):
+            self.confirmed = True
+            await inter.response.defer()
+            self.stop()
+
+        @discord.ui.button(label="No", style=discord.ButtonStyle.secondary)
+        async def no(self, inter: discord.Interaction, button: discord.ui.Button):
+            self.confirmed = False
+            await inter.response.defer()
+            self.stop()
+
+    view = ConfirmDeleteView()
+    await interaction.response.send_message(
+        f"Are you sure you want to delete **{actual_name}**?",
+        view=view,
+        ephemeral=True
+    )
+
+    await view.wait()
+
+    if not view.confirmed:
+        await interaction.followup.send("Deletion cancelled.", ephemeral=True)
+        return
+
     deleted = await delete_skill_ttrpg(user_id, skill_name, skill_id)
     if deleted:
-        await interaction.response.send_message(f"TTRPG Skill **{deleted}** deleted.", ephemeral=True)
+        await interaction.followup.send(f"TTRPG Skill **{actual_name}** deleted.", ephemeral=True)
     else:
-        await interaction.response.send_message("Skill not found!", ephemeral=True)
+        await interaction.followup.send("Skill not found!", ephemeral=True)
 
 
 # TTRPG Skill List / Command
 @bot.tree.command(name="skill_list_ttrpg", description="View your list of TTRPG skills")
 async def skill_list_ttrpg_cmd(interaction: discord.Interaction):
+
     user_id = str(interaction.user.id)
 
     result = (
@@ -910,15 +1018,26 @@ async def skill_list_ttrpg_cmd(interaction: discord.Interaction):
         return
 
     lines = []
+
     for s in result.data:
+
         dice = f"+ 1d{s['dice_power']}" if s["dice_power"] >= 0 else f"- 1d{abs(s['dice_power'])}"
 
-        attack_emoji = EMOJIS_ATK_TYPE.get(s["attack_type"].upper(), "")
-        sin_emoji = EMOJIS_SIN.get(s["sin_affinity"].upper(), "")
+        role = resolve_skill_role(str(s["skill_slot"]).lower())
+
+        role_emoji, sin_emoji = get_skill_emojis(
+            attack_type=s["attack_type"],
+            sin_affinity=s["sin_affinity"],
+            role=role
+        )
+
+        # Title case formatting
+        slot_text = str(s["skill_slot"]).capitalize()
 
         lines.append(
-            f"**Slot {s['skill_slot']}** | ID `{s['user_skill_id']}`\n"
-            f"{s['skill_name']} {attack_emoji} {sin_emoji} → {s['base_power']} {dice}"
+            f"**Slot {slot_text}** | ID `{s['user_skill_id']}`\n"
+            f"{s['skill_name']} {role_emoji}{sin_emoji} → "
+            f"{s['base_power']} {dice}"
         )
 
     await interaction.response.send_message(
@@ -926,8 +1045,205 @@ async def skill_list_ttrpg_cmd(interaction: discord.Interaction):
         ephemeral=True
     )
 
-# TTRPG Skill Info / Command
+# TTRPG Edit Skill / Command
+@bot.tree.command(name="skill_edit_ttrpg", description="Edit an existing TTRPG skill")
+@app_commands.describe(
+    skill_name="Skill name (optional if using ID)",
+    skill_id="Skill ID (optional if using name)"
+)
+async def skill_edit_ttrpg_cmd(
+    interaction: discord.Interaction,
+    skill_name: str = None,
+    skill_id: int = None
+):
 
+    user_id = str(interaction.user.id)
+
+    skill = await load_skill_ttrpg(user_id, skill_name, skill_id)
+
+    if not skill:
+        await interaction.response.send_message(
+            "Skill not found.",
+            ephemeral=True
+        )
+        return
+
+    slot, name, base, dice, attack, sin = skill
+
+    class EditSkillModal(Modal, title="Edit TTRPG Skill"):
+
+        skill_name_input = TextInput(
+            label="Skill Name",
+            default=name,
+            required=True,
+            max_length=50
+        )
+
+        slot_input = TextInput(
+            label="Skill Slot (1,2,3,guard,evade,counter)",
+            default=str(slot),
+            required=True,
+            max_length=10
+        )
+
+        base_input = TextInput(
+            label="Base Power",
+            default=str(base),
+            required=True,
+            max_length=6
+        )
+
+        dice_input = TextInput(
+            label="Dice Power",
+            default=str(dice),
+            required=True,
+            max_length=6
+        )
+
+        async def on_submit(self_modal, modal_interaction: discord.Interaction):
+
+            await modal_interaction.response.defer(ephemeral=True)
+
+            try:
+                new_name = self_modal.skill_name_input.value.strip()
+                new_slot = self_modal.slot_input.value.strip().lower()
+                new_base = int(self_modal.base_input.value)
+                new_dice = int(self_modal.dice_input.value)
+
+                # Defensive slots → no attack type
+                if new_slot in ["guard", "evade"]:
+                    attack_val = None
+                else:
+                    attack_val = attack
+
+                sin_val = sin
+
+                # Ask Attack Type Change 
+                if new_slot not in ["guard", "evade"]:
+
+                    class ConfirmView(View):
+                        def __init__(self):
+                            super().__init__(timeout=60)
+                            self.choice = None
+
+                        @discord.ui.button(label="Yes", style=discord.ButtonStyle.success)
+                        async def yes(self, inter: discord.Interaction, button: discord.ui.Button):
+                            self.choice = True
+                            await inter.response.defer()
+                            self.stop()
+
+                        @discord.ui.button(label="No", style=discord.ButtonStyle.danger)
+                        async def no(self, inter: discord.Interaction, button: discord.ui.Button):
+                            self.choice = False
+                            await inter.response.defer()
+                            self.stop()
+
+                    view = ConfirmView()
+
+                    await modal_interaction.followup.send(
+                        f"Change Attack Type? Current: {attack}",
+                        view=view,
+                        ephemeral=True
+                    )
+
+                    await view.wait()
+
+                    if view.choice:
+
+                        class AttackSelectView(View):
+                            def __init__(self):
+                                super().__init__(timeout=60)
+                                self.result = None
+
+                            @discord.ui.select(
+                                placeholder="Choose Attack Type",
+                                options=[discord.SelectOption(label=a.capitalize(), value=a) for a in ATTACK_TYPES]
+                            )
+                            async def select_attack(self_inter, inter: discord.Interaction, select: discord.ui.Select):
+                                self_inter.result = select.values[0].lower()
+                                await inter.response.defer()
+                                self_inter.stop()
+
+                        attack_view = AttackSelectView()
+
+                        await modal_interaction.followup.send(
+                            "Select new Attack Type:",
+                            view=attack_view,
+                            ephemeral=True
+                        )
+
+                        await attack_view.wait()
+
+                        if attack_view.result:
+                            attack_val = attack_view.result
+
+                # Ask Sin Affinity Change
+                view = ConfirmView()
+
+                await modal_interaction.followup.send(
+                    f"Change Sin Affinity? Current: {sin}",
+                    view=view,
+                    ephemeral=True
+                )
+
+                await view.wait()
+
+                if view.choice:
+
+                    class SinSelectView(View):
+                        def __init__(self):
+                            super().__init__(timeout=60)
+                            self.result = None
+
+                        @discord.ui.select(
+                            placeholder="Choose Sin Affinity",
+                            options=[discord.SelectOption(label=s.capitalize(), value=s) for s in SIN_AFFINITIES]
+                        )
+                        async def select_sin(self_inter, inter: discord.Interaction, select: discord.ui.Select):
+                            self_inter.result = select.values[0].lower()
+                            await inter.response.defer()
+                            self_inter.stop()
+
+                    sin_view = SinSelectView()
+
+                    await modal_interaction.followup.send(
+                        "Select new Sin Affinity:",
+                        view=sin_view,
+                        ephemeral=True
+                    )
+
+                    await sin_view.wait()
+
+                    if sin_view.result:
+                        sin_val = sin_view.result
+
+                # Update Database
+                supabase.table("ttrpg_skills").update({
+                    "skill_slot": new_slot,
+                    "skill_name": new_name,
+                    "base_power": new_base,
+                    "dice_power": new_dice,
+                    "attack_type": attack_val,
+                    "sin_affinity": sin_val
+                }).eq("user_id", user_id).eq(
+                    "user_skill_id",
+                    skill_id if skill_id else skill[0]
+                ).execute()
+
+                await modal_interaction.followup.send(
+                    "Skill edited successfully!",
+                    ephemeral=True
+                )
+
+            except Exception as e:
+                await modal_interaction.followup.send(
+                    f"Error: {str(e)}",
+                    ephemeral=True
+                )
+
+    await interaction.response.send_modal(EditSkillModal())
+
+# TTRPG Skill Info / Command
 @bot.tree.command(name="skill_info_ttrpg", description="View the details of a TTRPG skill")
 @app_commands.describe(
     skill_name="Skill name (optional if using ID)",
@@ -953,14 +1269,18 @@ async def skill_info_ttrpg_cmd(
 
     dice_txt = f"1d{dice}" if dice >= 0 else f"-1d{abs(dice)}"
 
-    # Emoji mapping
-    attack_emoji = EMOJIS_ATK_TYPE.get(attack_type.upper() if attack_type else "", "")
-    sin_emoji = EMOJIS_SIN.get(sin_affinity.upper() if sin_affinity else "", "")
+    role = resolve_skill_role(str(skill_slot).lower())
+
+    role_emoji, sin_emoji = get_skill_emojis(
+        attack_type=attack_type,
+        sin_affinity=sin_affinity,
+        role=role
+    )
 
     await interaction.response.send_message(
         f"**__Skill Info__**\n\n"
-        f"**{name}** {attack_emoji} {sin_emoji}\n"
-        f"Slot: `{skill_slot}`\n"
+        f"**{name}** {role_emoji}{sin_emoji}\n"
+        f"Slot: `{str(skill_slot).capitalize()}`\n"
         f"Base Power: `{base}`\n"
         f"Dice: `{dice_txt}`\n"
         f"Attack Type: `{attack_type.capitalize() if attack_type else 'None'}`\n"
@@ -992,25 +1312,27 @@ async def roll_ttrpg_cmd(
         await interaction.response.send_message("Skill not found!", ephemeral=True)
         return
 
-    total, roll, mod_base, mod_dice, attack_type, sin_affinity = await roll_skill_ttrpg(
-        skill,
-        sanity
-    )
+    total, roll, mod_base, mod_dice, attack_type, sin_affinity, _ = await roll_skill_ttrpg(skill, sanity)
 
+    skill_slot = skill[0]
+    skill_name_val = skill[1]
     dice_power = skill[3]
 
     dice_text = f"- 1d{mod_dice}" if dice_power < 0 else f"+ 1d{mod_dice}"
 
-    # Emoji mapping
-    attack_emoji = EMOJIS_ATK_TYPE.get(attack_type.upper() if attack_type else "", "")
-    sin_emoji = EMOJIS_SIN.get(sin_affinity.upper() if sin_affinity else "", "")
+    role = resolve_skill_role(str(skill_slot).lower())
+
+    role_emoji, sin_emoji = get_skill_emojis(
+        attack_type=attack_type,
+        sin_affinity=sin_affinity,
+        role=role
+    )
 
     await interaction.response.send_message(
-        f"**{skill[1]}** {attack_emoji} {sin_emoji}\n"
+        f"**{skill_name_val}** {role_emoji}{sin_emoji}\n"
         f"{mod_base} {dice_text} ({roll}) → **Total: {total}**"
     )
 
-# TTRPG Clash / Command
 @bot.tree.command(name="clash_ttrpg", description="Clash your TTRPG skill against another player's TTRPG skill")
 @app_commands.describe(
     skill_name="Your skill name (optional if using ID)",
@@ -1036,10 +1358,17 @@ async def clash_ttrpg_cmd(interaction: discord.Interaction, sanity: int, skill_n
 
     skill1_slot, skill1_name, base1, dice_power1, attack1, sin1 = skill1
 
+    role1 = resolve_skill_role(skill1_slot)
+
+    attack_emoji1, sin_emoji1 = get_skill_emojis(
+        attack_type=attack1,
+        sin_affinity=sin1,
+        role=role1
+    )
+
     # -------------------------
     # Challenge View
     # -------------------------
-
     class ChallengeView(View):
         def __init__(self, original_user: discord.User):
             super().__init__(timeout=30)
@@ -1062,20 +1391,17 @@ async def clash_ttrpg_cmd(interaction: discord.Interaction, sanity: int, skill_n
 
                 sanity_input = TextInput(
                     label="Sanity (-45 to 45)",
-                    placeholder="Enter your sanity first",
                     required=True,
                     max_length=5
                 )
 
                 skill_input = TextInput(
                     label="Skill name or ID",
-                    placeholder="Enter your skill name or ID",
                     required=True,
                     max_length=50
                 )
 
                 async def on_submit(self_modal, modal_interaction: discord.Interaction):
-
                     try:
                         sanity_val = max(
                             MIN_SANITY,
@@ -1104,7 +1430,6 @@ async def clash_ttrpg_cmd(interaction: discord.Interaction, sanity: int, skill_n
                             parent_view.stop()
                             return
 
-                        # Save ALL skill info properly
                         slot2, skill_name2, base2, dice2, attack2, sin2 = challenger_skill
 
                         parent_view.challenger_data = (
@@ -1118,7 +1443,13 @@ async def clash_ttrpg_cmd(interaction: discord.Interaction, sanity: int, skill_n
                             slot2
                         )
 
-                        attack_emoji2, sin_emoji2 = get_skill_emojis(attack2, sin2)
+                        role2 = resolve_skill_role(slot2)
+
+                        attack_emoji2, sin_emoji2 = get_skill_emojis(
+                            attack_type=attack2,
+                            sin_affinity=sin2,
+                            role=role2
+                        )
 
                         await modal_interaction.response.send_message(
                             f"You joined the clash using **{skill_name2}** {attack_emoji2}{sin_emoji2}!",
@@ -1136,17 +1467,11 @@ async def clash_ttrpg_cmd(interaction: discord.Interaction, sanity: int, skill_n
 
             await interaction.response.send_modal(ChallengeModal())
 
-    # -------------------------
-    # Start Clash
-    # -------------------------
-
-    attack_emoji1, sin_emoji1 = get_skill_emojis(attack1, sin1)
-
     view = ChallengeView(original_user)
 
     await interaction.response.send_message(
         f"⚔️ CLASH START - {original_user.mention} uses **{skill1_name}** {attack_emoji1}{sin_emoji1}!\nWaiting for a challenger...",
-        view=view 
+        view=view
     )
 
     await view.wait()
@@ -1161,36 +1486,35 @@ async def clash_ttrpg_cmd(interaction: discord.Interaction, sanity: int, skill_n
     # -------------------------
     # Both Players Ready
     # -------------------------
-
     user2, skill2_name, sanity2, base2, dice_power2, attack2, sin2, skill2_slot = view.challenger_data
-
-    # -------------------------
-    # Clash Resolution Loop
-    # -------------------------
 
     step_count = 1
 
     while True:
-
-        # Unpack skills
-        skill1_slot, skill1_name, base1, dice_power1, attack1, sin1 = skill1
-
-        role1 = resolve_skill_role(skill1_slot)
-        role2 = resolve_skill_role(skill2_slot)
-
-        # Roll skills
-        total1, roll1, mod_base1, mod_dice1, atk1_db, sin1_db = await roll_skill_ttrpg(
+        # Roll skills (fix unpacking for 7 values)
+        total1, roll1, mod_base1, mod_dice1, atk1_db, sin1_db, role1_db = await roll_skill_ttrpg(
             skill1,
             sanity
         )
 
-        total2, roll2, mod_base2, mod_dice2, atk2_db, sin2_db = await roll_skill_ttrpg(
+        total2, roll2, mod_base2, mod_dice2, atk2_db, sin2_db, role2_db = await roll_skill_ttrpg(
             (None, skill2_name, base2, dice_power2, attack2, sin2),
             sanity2
         )
 
-        attack_emoji1, sin_emoji1 = get_skill_emojis(atk1_db, sin1_db)
-        attack_emoji2, sin_emoji2 = get_skill_emojis(attack2, sin2)
+        role1 = resolve_skill_role(skill1_slot)
+        role2 = resolve_skill_role(skill2_slot)
+
+        attack_emoji1, sin_emoji1 = get_skill_emojis(
+            attack_type=atk1_db,
+            sin_affinity=sin1_db,
+            role=role1
+        )
+        attack_emoji2, sin_emoji2 = get_skill_emojis(
+            attack_type=atk2_db,
+            sin_affinity=sin2_db,
+            role=role2
+        )
 
         dice_text1 = f"- 1d{mod_dice1}" if dice_power1 < 0 else f"+ 1d{mod_dice1}"
         dice_text2 = f"- 1d{mod_dice2}" if dice_power2 < 0 else f"+ 1d{mod_dice2}"
@@ -1207,9 +1531,8 @@ async def clash_ttrpg_cmd(interaction: discord.Interaction, sanity: int, skill_n
             await interaction.channel.send(clash_text)
 
         # -------------------------
-        # Defensive Skill Resolution
+        # Defensive Skill Resolution (FULL ORIGINAL)
         # -------------------------
-
         damage_to_user1 = total2
         damage_to_user2 = total1
         shield_user1 = 0
@@ -1218,7 +1541,7 @@ async def clash_ttrpg_cmd(interaction: discord.Interaction, sanity: int, skill_n
         outcome_text = "Defensive Outcome:\n"
         defensive_triggered = False
 
-        # ---------- Evade ----------
+        # Evade
         if role1 == "evade" and role2 == "attack":
             defensive_triggered = True
             if total1 > total2:
@@ -1235,7 +1558,7 @@ async def clash_ttrpg_cmd(interaction: discord.Interaction, sanity: int, skill_n
             else:
                 outcome_text += f"{user2.display_name} failed to evade and took {damage_to_user2} {attack_emoji1}{sin_emoji1} damage!\n"
 
-        # ---------- Guard ----------
+        # Guard
         if role1 == "guard":
             defensive_triggered = True
             shield_user1 = total1
@@ -1248,7 +1571,7 @@ async def clash_ttrpg_cmd(interaction: discord.Interaction, sanity: int, skill_n
             damage_to_user2 = total1
             outcome_text += f"{user2.display_name} gains {shield_user2} shield and takes {damage_to_user2} {attack_emoji1}{sin_emoji1} damage\n"
 
-        # ---------- Counter ----------
+        # Counter
         if role1 == "counter":
             defensive_triggered = True
             counter_damage_user1 = total1
@@ -1267,29 +1590,23 @@ async def clash_ttrpg_cmd(interaction: discord.Interaction, sanity: int, skill_n
         # -------------------------
         # Exit Conditions
         # -------------------------
-
         if role1 in ["guard", "evade", "counter"] or role2 in ["guard", "evade", "counter"]:
             break
-
         if role1 == "attack" and role2 == "attack" and total1 != total2:
             break
-
         if step_count > 50:
             break
 
         step_count += 1
 
     # -------------------------
-    # Winner Resolution Report
+    # Winner Resolution
     # -------------------------
-
-    # Only report winner damage if clash was pure attack vs attack
     pure_attack_clash = (role1 == "attack" and role2 == "attack")
 
     if pure_attack_clash:
         winner = original_user if total1 > total2 else user2
         total_winner = max(total1, total2)
-
         attack_emoji, sin_emoji = get_skill_emojis(skill1[4], skill1[5])
 
         if interaction.channel:
