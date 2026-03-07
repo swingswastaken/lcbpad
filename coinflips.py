@@ -36,14 +36,16 @@ UNBREAKABLE_HEAD = "<:limbus_unbreakable_heads:1463921190228721684>"
 UNBREAKABLE_TAIL = "<:limbus_unbreakable_tails:1463921283946512566>"
 MAX_SANITY = 45
 MIN_SANITY = -45
-ATTACK_TYPES = ["slash", "pierce", "blunt"]
-SIN_AFFINITIES = ["wrath", "lust", "sloth", "gluttony", "gloom", "pride", "envy"]
-SLOTS = ["1", "2", "3", "guard", "evade", "counter"]
+ATTACK_TYPES = ["Slash", "Pierce", "Blunt", "Evade", "Guard"]
+SIN_AFFINITIES = ["Wrath", "Lust", "Sloth", "Gluttony", "Gloom", "Pride", "Envy"]
+SLOTS = ["1", "2", "3", "Guard", "Evade", "Counter"]
 
 EMOJIS_ATK_TYPE = {
 "SLASH": "<:Slash:1479599322336198778>",
 "PIERCE": "<:Pierce:1479599216551657674>",
-"BLUNT": "<:Blunt:1479599265100726332>"
+"BLUNT": "<:Blunt:1479599265100726332>",
+"GUARD": "<:Guard:1479784787458916392>",
+"EVADE": "<:Evade:1479784818769399849>"
 }
 
 EMOJIS_SIN = {
@@ -56,7 +58,11 @@ EMOJIS_SIN = {
     "ENVY": "<:Envy:1479599410877960377>" 
 }
 
-
+# helper function for emojis
+def get_skill_emojis(attack_type, sin_affinity):
+    attack_emoji = EMOJIS_ATK_TYPE.get((attack_type or "").upper(), "")
+    sin_emoji = EMOJIS_SIN.get((sin_affinity or "").upper(), "")
+    return attack_emoji, sin_emoji
 
 # ----------------------
 # Limbus Skill Functions
@@ -547,6 +553,8 @@ async def clash_cmd(interaction: discord.Interaction, sanity: int, skill_name: s
     user1_id = str(original_user.id)
     sanity = max(-45, min(45, sanity))
 
+    await interaction.response.defer()
+
     # Load original user's skill
     skill1 = load_skill(user1_id, skill_name, skill_id)
     if not skill1:
@@ -984,7 +992,6 @@ async def roll_ttrpg_cmd(
         await interaction.response.send_message("Skill not found!", ephemeral=True)
         return
 
-    # ⭐ DO NOT unpack skill here
     total, roll, mod_base, mod_dice, attack_type, sin_affinity = await roll_skill_ttrpg(
         skill,
         sanity
@@ -1110,8 +1117,11 @@ async def clash_ttrpg_cmd(interaction: discord.Interaction, sanity: int, skill_n
                             sin2,
                             slot2
                         )
+
+                        attack_emoji2, sin_emoji2 = get_skill_emojis(attack2, sin2)
+
                         await modal_interaction.response.send_message(
-                            f"You joined the clash using **{skill_name2}**!",
+                            f"You joined the clash using **{skill_name2}** {attack_emoji2}{sin_emoji2}!",
                             ephemeral=True
                         )
 
@@ -1130,11 +1140,13 @@ async def clash_ttrpg_cmd(interaction: discord.Interaction, sanity: int, skill_n
     # Start Clash
     # -------------------------
 
+    attack_emoji1, sin_emoji1 = get_skill_emojis(attack1, sin1)
+
     view = ChallengeView(original_user)
 
     await interaction.response.send_message(
-        f"⚔️ CLASH START - {original_user.mention} uses **{skill1_name}**!\nWaiting for a challenger...",
-        view=view
+        f"⚔️ CLASH START - {original_user.mention} uses **{skill1_name}** {attack_emoji1}{sin_emoji1}!\nWaiting for a challenger...",
+        view=view 
     )
 
     await view.wait()
@@ -1177,28 +1189,22 @@ async def clash_ttrpg_cmd(interaction: discord.Interaction, sanity: int, skill_n
             sanity2
         )
 
-        attack_emoji1 = EMOJIS_ATK_TYPE.get((atk1_db or "").upper(), "")
-        sin_emoji1 = EMOJIS_SIN.get((sin1_db or "").upper(), "")
-
-        attack_emoji2 = EMOJIS_ATK_TYPE.get((attack2 or "").upper(), "")
-        sin_emoji2 = EMOJIS_SIN.get((sin2 or "").upper(), "")
+        attack_emoji1, sin_emoji1 = get_skill_emojis(atk1_db, sin1_db)
+        attack_emoji2, sin_emoji2 = get_skill_emojis(attack2, sin2)
 
         dice_text1 = f"- 1d{mod_dice1}" if dice_power1 < 0 else f"+ 1d{mod_dice1}"
         dice_text2 = f"- 1d{mod_dice2}" if dice_power2 < 0 else f"+ 1d{mod_dice2}"
 
         clash_text = (
             f"⚔️ Clash Step {step_count}\n\n"
-            f"{original_user.display_name} ({role1}) {attack_emoji1}{sin_emoji1}\n"
+            f"{original_user.display_name}\n**{skill1_name}** {attack_emoji1}{sin_emoji1}\n"
             f"{mod_base1} {dice_text1} ({roll1}) → **Total: {total1}**\n\n"
-            f"{user2.display_name} ({role2}) {attack_emoji2}{sin_emoji2}\n"
+            f"{user2.display_name}\n**{skill2_name}** {attack_emoji2}{sin_emoji2}\n"
             f"{mod_base2} {dice_text2} ({roll2}) → **Total: {total2}**"
         )
 
-        if step_count == 1:
-            await interaction.followup.send(clash_text)
-        else:
-            if interaction.channel:
-                await interaction.channel.send(clash_text)
+        if interaction.channel:
+            await interaction.channel.send(clash_text)
 
         # -------------------------
         # Defensive Skill Resolution
@@ -1210,9 +1216,11 @@ async def clash_ttrpg_cmd(interaction: discord.Interaction, sanity: int, skill_n
         shield_user2 = 0
 
         outcome_text = "Defensive Outcome:\n"
+        defensive_triggered = False
 
         # ---------- Evade ----------
         if role1 == "evade" and role2 == "attack":
+            defensive_triggered = True
             if total1 > total2:
                 damage_to_user1 = 0
                 outcome_text += f"{original_user.display_name} successfully evaded!\n"
@@ -1220,6 +1228,7 @@ async def clash_ttrpg_cmd(interaction: discord.Interaction, sanity: int, skill_n
                 outcome_text += f"{original_user.display_name} failed to evade and took {damage_to_user1} {attack_emoji2}{sin_emoji2} damage!\n"
 
         if role2 == "evade" and role1 == "attack":
+            defensive_triggered = True
             if total2 > total1:
                 damage_to_user2 = 0
                 outcome_text += f"{user2.display_name} successfully evaded!\n"
@@ -1228,27 +1237,31 @@ async def clash_ttrpg_cmd(interaction: discord.Interaction, sanity: int, skill_n
 
         # ---------- Guard ----------
         if role1 == "guard":
+            defensive_triggered = True
             shield_user1 = total1
             damage_to_user1 = total2
             outcome_text += f"{original_user.display_name} gains {shield_user1} shield and takes {damage_to_user1} {attack_emoji2}{sin_emoji2} damage\n"
 
         if role2 == "guard":
+            defensive_triggered = True
             shield_user2 = total2
             damage_to_user2 = total1
             outcome_text += f"{user2.display_name} gains {shield_user2} shield and takes {damage_to_user2} {attack_emoji1}{sin_emoji1} damage\n"
 
         # ---------- Counter ----------
         if role1 == "counter":
+            defensive_triggered = True
             counter_damage_user1 = total1
             damage_to_user1 = total2
             outcome_text += f"{original_user.display_name} takes {damage_to_user1} damage and counters for {counter_damage_user1} {attack_emoji1}{sin_emoji1} damage\n"
 
         if role2 == "counter":
+            defensive_triggered = True
             counter_damage_user2 = total2
             damage_to_user2 = total1
             outcome_text += f"{user2.display_name} takes {damage_to_user2} damage and counters for {counter_damage_user2} {attack_emoji2}{sin_emoji2} damage\n"
 
-        if interaction.channel:
+        if defensive_triggered and interaction.channel:
             await interaction.channel.send(outcome_text)
 
         # -------------------------
@@ -1277,12 +1290,11 @@ async def clash_ttrpg_cmd(interaction: discord.Interaction, sanity: int, skill_n
         winner = original_user if total1 > total2 else user2
         total_winner = max(total1, total2)
 
-        attack_emoji = EMOJIS_ATK_TYPE.get((skill1[4] or "").upper(), "")
-        sin_emoji = EMOJIS_SIN.get((skill1[5] or "").upper(), "")
+        attack_emoji, sin_emoji = get_skill_emojis(skill1[4], skill1[5])
 
         if interaction.channel:
             await interaction.channel.send(
-                f"🏆 **{winner.display_name}**'s Damage Dealt {attack_emoji}{sin_emoji}: {total_winner}"
+                f"🏆 **{winner.display_name}**'s Damage Dealt: {total_winner} {attack_emoji}{sin_emoji}"
             )
 
 # Run the bot
