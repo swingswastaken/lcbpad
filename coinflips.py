@@ -496,7 +496,9 @@ async def skill_list_cmd(interaction: discord.Interaction):
             ephemeral=True
         )
         return
+
     lines = []
+
     for s in result.data:
         normal_coins = max(0, s["coins"] - s["unbreakable"])
 
@@ -507,15 +509,20 @@ async def skill_list_cmd(interaction: discord.Interaction):
 
         lines.append(
             f"**ID `{s['user_skill_id']}`**\n"
-            f"{s['skill_name']}\n" 
-            f"{s['base_power']} Base Power {s['coin_power']} Coin Power\n"
+            f"{s['skill_name']}\n"
+            f"{s['base_power']} Base Power | {s['coin_power']} Coin Power\n"
             f"{coin_display}"
         )
 
-    await interaction.response.send_message(
-        "**__Skill List__**\n\n" + "\n\n".join(lines),
-        ephemeral=True
-    )
+    message = "**__Skill List__**\n\n" + "\n\n".join(lines)
+
+    # ---- SAFE CHUNKING (prevents "interaction failed") ----
+    chunks = [message[i:i+1900] for i in range(0, len(message), 1900)]
+
+    await interaction.response.send_message(chunks[0], ephemeral=True)
+
+    for chunk in chunks[1:]:
+        await interaction.followup.send(chunk, ephemeral=True)
 
 # Skill Info / Command
 
@@ -607,7 +614,7 @@ def save_skill(user_id, skill_name, base_power, coin_power, coins, unbreakable):
 
     return user_skill_id
 
-
+# Limbus Load Skill
 def load_skill(user_id, skill_name=None, skill_id=None):
     query = supabase.table("skills").select(
         "skill_name, base_power, coin_power, coins, unbreakable"
@@ -634,7 +641,7 @@ def load_skill(user_id, skill_name=None, skill_id=None):
         row["unbreakable"]
     )
 
-
+# Limbus Delete Skill
 def delete_skill(user_id, skill_name=None, skill_id=None):
     query = supabase.table("skills").select("skill_name").eq("user_id", user_id)
 
@@ -661,10 +668,7 @@ def delete_skill(user_id, skill_name=None, skill_id=None):
     return skill_name
 
 
-# ----------------------
-# Clash Command
-# ----------------------
-
+# Limbus Clash / Command
 @bot.tree.command(name="clash", description="Clash your skill against another player's skill")
 @app_commands.describe(
     skill_name="Your saved skill name (optional if using ID)",
