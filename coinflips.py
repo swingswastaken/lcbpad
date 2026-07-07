@@ -843,7 +843,7 @@ async def clash_cmd(interaction: discord.Interaction, sanity: int, skill_name: s
                 else:
                     removed_unbreakables2 += 1
 
-        await interaction.followup.send(
+        await interaction.channel.send(
             f"**Clash Step {step_count}:**\n"
             f"{original_user.display_name}: {trail1} ({total1})\n"
             f"{user2.display_name}: {trail2} ({total2})\n"
@@ -876,7 +876,7 @@ async def clash_cmd(interaction: discord.Interaction, sanity: int, skill_name: s
         winner_sanity
     )
 
-    await interaction.followup.send(
+    await interaction.channel.send(
         f"🏆 **{winner.display_name}** flips all remaining coins:\n{trail_winner}\nTotal Power: {total_winner}"
     )
 
@@ -896,7 +896,7 @@ async def clash_cmd(interaction: discord.Interaction, sanity: int, skill_name: s
             else:
                 trail_loser += UNBREAKABLE_TAIL + " "
 
-        await interaction.followup.send(
+        await interaction.channel.send(
             f"💀 **{loser.display_name}** flips their unbreakable coins:\n{trail_loser}\nTotal Power: {total_loser}"
         )
 
